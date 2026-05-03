@@ -62,6 +62,8 @@ def validate_file(
             raise FileNotFoundError(f"Normalized file is missing: {normalized_path}")
 
         frame = pl.read_parquet(normalized_path)
+        if "source_member" not in frame.columns:
+            frame = frame.with_columns(pl.lit(None, dtype=pl.String).alias("source_member"))
         valid, failure = TripSchema.filter(frame, cast=True)
         invalid = failure.details()
 

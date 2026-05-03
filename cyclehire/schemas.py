@@ -16,6 +16,7 @@ class TripSchema(dy.Schema):
     duration_ms = dy.Int64(nullable=False, min=0)
     source_key = dy.String(nullable=False, min_length=1)
     source_etag = dy.String(nullable=False, min_length=1)
+    source_member = dy.String(nullable=True, min_length=1)
     source_row_number = dy.Int64(nullable=False, min=1)
 
     @dy.rule()

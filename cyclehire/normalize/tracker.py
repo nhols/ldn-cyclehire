@@ -19,6 +19,7 @@ def plan_normalize_work(
         statuses.append("failed")
     if force:
         statuses.append("normalized")
+        statuses.append("skipped")
 
     placeholders = ", ".join("?" for _ in statuses)
     rows = connection.execute(
@@ -35,6 +36,18 @@ def plan_normalize_work(
     if limit is not None:
         LOGGER.info("Applying normalize work limit: %s", limit)
         rows = rows[:limit]
+    return [FileRecord.from_row(row) for row in rows]
+
+
+def list_downloaded_files(connection: sqlite3.Connection) -> list[FileRecord]:
+    rows = connection.execute(
+        """
+        SELECT *
+        FROM files
+        WHERE raw_status = 'downloaded'
+        ORDER BY source_key
+        """
+    ).fetchall()
     return [FileRecord.from_row(row) for row in rows]
 
 
@@ -65,6 +78,23 @@ def mark_normalized(
             schema_version,
             source_key,
         ),
+    )
+    connection.commit()
+
+
+def mark_normalize_skipped(connection: sqlite3.Connection, source_key: str, reason: str) -> None:
+    connection.execute(
+        """
+        UPDATE files
+        SET normalized_status = 'skipped',
+            normalized_path = NULL,
+            row_count_raw = 0,
+            row_count_normalized = 0,
+            error_message = ?,
+            processed_at = CURRENT_TIMESTAMP
+        WHERE source_key = ?
+        """,
+        (reason, source_key),
     )
     connection.commit()
 

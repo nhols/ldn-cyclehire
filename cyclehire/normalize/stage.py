@@ -2,10 +2,24 @@ import logging
 import sqlite3
 from pathlib import Path
 
+import polars as pl
+
 from cyclehire.normalize.config import NormalizePipelineConfig
+from cyclehire.normalize.fingerprints import (
+    CsvFingerprint,
+    FingerprintedCsv,
+    build_flat_csv_fingerprint_index,
+)
 from cyclehire.normalize.paths import normalized_path_for
-from cyclehire.normalize.tracker import mark_normalize_failed, mark_normalized, plan_normalize_work
+from cyclehire.normalize.tracker import (
+    list_downloaded_files,
+    mark_normalize_failed,
+    mark_normalize_skipped,
+    mark_normalized,
+    plan_normalize_work,
+)
 from cyclehire.normalize.transforms import normalize_csv_frame, read_source_frame
+from cyclehire.normalize.zip_sources import read_unique_zip_csv_members
 from cyclehire.tracking import FileRecord, connect_tracking_db
 from cyclehire.utils import write_parquet_atomic
 
@@ -28,6 +42,13 @@ def run_normalize_pipeline(config: NormalizePipelineConfig) -> None:
             LOGGER.info("Dry run complete; no normalized outputs written")
             return
 
+        duplicate_index: dict[CsvFingerprint, list[FingerprintedCsv]] = {}
+        if any(item.raw_path is not None and item.raw_path.lower().endswith(".zip") for item in files):
+            duplicate_index = build_flat_csv_fingerprint_index(
+                config.data_dir,
+                list_downloaded_files(connection),
+            )
+
         for index, item in enumerate(files, start=1):
             LOGGER.info(
                 "Normalizing %s of %s: %s",
@@ -35,7 +56,7 @@ def run_normalize_pipeline(config: NormalizePipelineConfig) -> None:
                 len(files),
                 item.source_key,
             )
-            normalize_file(config.data_dir, connection, item)
+            normalize_file(config.data_dir, connection, item, duplicate_index)
 
     LOGGER.info("Normalize stage complete")
 
@@ -44,6 +65,7 @@ def normalize_file(
     data_dir: Path,
     connection: sqlite3.Connection,
     item: FileRecord,
+    duplicate_index: dict[CsvFingerprint, list[FingerprintedCsv]],
 ) -> None:
     source_key = item.source_key
     if item.raw_path is None:
@@ -56,18 +78,26 @@ def normalize_file(
     try:
         if not raw_path.exists():
             raise FileNotFoundError(f"Raw file is missing: {raw_path}")
-        if raw_path.suffix.lower() not in {".csv", ".xlsx"}:
+        if raw_path.suffix.lower() not in {".csv", ".xlsx", ".zip"}:
             raise ValueError(f"Unsupported raw file type for normalization: {raw_path.suffix}")
 
-        raw_frame = read_source_frame(raw_path)
-        normalized = normalize_csv_frame(raw_frame, item)
+        raw_row_count, normalized = normalize_source(raw_path, item, duplicate_index)
+        if normalized is None:
+            mark_normalize_skipped(
+                connection,
+                source_key,
+                "All ZIP CSV members duplicate already-downloaded flat CSV files",
+            )
+            LOGGER.info("Skipped %s because all ZIP CSV members are duplicates", source_key)
+            return
+
         write_parquet_atomic(normalized, destination)
 
         mark_normalized(
             connection=connection,
             source_key=source_key,
             normalized_path=normalized_relative_path,
-            raw_row_count=raw_frame.height,
+            raw_row_count=raw_row_count,
             normalized_row_count=normalized.height,
             schema_version=SCHEMA_VERSION,
         )
@@ -75,3 +105,23 @@ def normalize_file(
     except Exception as exc:
         mark_normalize_failed(connection, source_key, exc)
         LOGGER.exception("Failed to normalize %s", source_key)
+
+
+def normalize_source(
+    raw_path: Path,
+    item: FileRecord,
+    duplicate_index: dict[CsvFingerprint, list[FingerprintedCsv]],
+) -> tuple[int, pl.DataFrame | None]:
+    if raw_path.suffix.lower() != ".zip":
+        raw_frame = read_source_frame(raw_path)
+        return raw_frame.height, normalize_csv_frame(raw_frame, item)
+
+    normalized_members: list[pl.DataFrame] = []
+    raw_row_count = 0
+    for member_name, raw_frame in read_unique_zip_csv_members(raw_path, duplicate_index):
+        raw_row_count += raw_frame.height
+        normalized_members.append(normalize_csv_frame(raw_frame, item, source_member=member_name))
+
+    if not normalized_members:
+        return 0, None
+    return raw_row_count, pl.concat(normalized_members, how="vertical")

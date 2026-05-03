@@ -23,6 +23,7 @@ CANONICAL_COLUMNS = [
     "duration_ms",
     "source_key",
     "source_etag",
+    "source_member",
     "source_row_number",
 ]
 
@@ -39,7 +40,11 @@ def read_source_frame(raw_path: Path) -> pl.DataFrame:
     )
 
 
-def normalize_csv_frame(frame: pl.DataFrame, item: FileRecord) -> pl.DataFrame:
+def normalize_csv_frame(
+    frame: pl.DataFrame,
+    item: FileRecord,
+    source_member: str | None = None,
+) -> pl.DataFrame:
     columns = set(frame.columns)
     for schema in CSV_SCHEMAS:
         source_columns = schema.columns.required_source_columns()
@@ -49,7 +54,7 @@ def normalize_csv_frame(frame: pl.DataFrame, item: FileRecord) -> pl.DataFrame:
                 schema.name,
                 item.source_key,
             )
-            return normalize_mapped_schema(frame, item, schema)
+            return normalize_mapped_schema(frame, item, schema, source_member)
 
     raise ValueError("Unknown CSV schema. Columns: " + ", ".join(frame.columns))
 
@@ -58,6 +63,7 @@ def normalize_mapped_schema(
     frame: pl.DataFrame,
     item: FileRecord,
     schema: CsvSchema,
+    source_member: str | None,
 ) -> pl.DataFrame:
     columns = schema.columns
     start_at = parse_datetime(columns.start_at, list(schema.date_formats))
@@ -88,6 +94,7 @@ def normalize_mapped_schema(
             duration_ms.alias("duration_ms"),
             pl.lit(item.source_key).alias("source_key"),
             pl.lit(item.etag).alias("source_etag"),
+            pl.lit(source_member, dtype=pl.String).alias("source_member"),
             pl.col("source_row_number").cast(pl.Int64),
         )
         .select(CANONICAL_COLUMNS)

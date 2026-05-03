@@ -16,8 +16,8 @@ data/validation/invalid/
 ```
 
 Invalid diagnostics keep the row values plus Dataframely field/rule statuses.
-`source_key` and `source_row_number` make each rejected row traceable back to
-the original source file and row number.
+`source_key`, `source_member`, and `source_row_number` make each rejected row
+traceable back to the original source file, optional ZIP member, and row number.
 
 Key modules:
 

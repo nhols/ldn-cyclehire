@@ -114,13 +114,18 @@ duration_seconds
 duration_ms
 source_key
 source_etag
+source_member
 source_row_number
 ```
 
-Unsupported downloaded file types, unknown source schemas, and parse failures are
-marked as `normalized_status = failed` with an `error_message` in the tracking
-table. They can be retried with `--retry-failed` after the normalizer learns how
-to handle them.
+ZIP members are deduplicated against downloaded flat CSVs using uncompressed
+file size and CRC32. ZIPs where every CSV member is a duplicate are marked as
+`normalized_status = skipped`.
+
+Unsupported downloaded file types, unknown source schemas, and parse failures
+are marked as `normalized_status = failed` with an `error_message` in the
+tracking table. They can be retried with `--retry-failed` after the normalizer
+learns how to handle them.
 
 Validation
 ----------
