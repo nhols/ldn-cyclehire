@@ -1,11 +1,13 @@
 import logging
 from dataclasses import dataclass
+from datetime import date
 from enum import Enum
 from pathlib import Path
 from typing import Annotated
 
 import typer
 
+from cyclehire.bikepoints import BikePointsConfig, run_bikepoints_pipeline
 from cyclehire.normalize import NormalizePipelineConfig, run_normalize_pipeline
 from cyclehire.raw import RawPipelineConfig, run_raw_pipeline
 from cyclehire.validate import ValidatePipelineConfig, run_validate_pipeline
@@ -144,6 +146,43 @@ def validate(
             retry_failed=retry_failed,
             force=force,
         )
+    )
+
+
+@app.command()
+def bikepoints(
+    context: typer.Context,
+    sample_date: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--sample-date",
+            metavar="YYYY-MM-DD",
+            help="Trip date to sample for station matching. Can be passed multiple times.",
+        ),
+    ] = None,
+) -> None:
+    cli_context = _cli_context(context)
+    run_bikepoints_pipeline(
+        BikePointsConfig(
+            data_dir=cli_context.data_dir,
+            sample_dates=parse_sample_dates(sample_date),
+        )
+    )
+
+
+def parse_sample_dates(values: list[str] | None) -> tuple[date, ...]:
+    if not values:
+        return default_bikepoint_sample_dates()
+    return tuple(date.fromisoformat(value) for value in values)
+
+
+def default_bikepoint_sample_dates() -> tuple[date, ...]:
+    return (
+        date(2015, 6, 17),
+        date(2018, 6, 13),
+        date(2021, 6, 16),
+        date(2024, 6, 19),
+        date(2025, 6, 18),
     )
 
 

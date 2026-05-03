@@ -179,3 +179,28 @@ data/validation/invalid/
 Invalid diagnostics preserve the normalized row values plus Dataframely rule
 statuses. The `source_key` and `source_row_number` columns allow every failed
 row to be traced back to the original raw file and row number.
+
+BikePoint station metadata
+--------------------------
+
+Fetch the current TfL BikePoint station metadata and compare it with stations
+seen on a few sample trip dates:
+
+```sh
+uv run cyclehire bikepoints
+```
+
+Sample specific dates:
+
+```sh
+uv run cyclehire bikepoints --sample-date 2015-06-17 --sample-date 2025-06-18
+```
+
+Outputs are written to:
+
+```text
+data/reference/bikepoints/
+  bikepoints.json
+  bikepoints.parquet
+  station_match_samples.parquet
+```
