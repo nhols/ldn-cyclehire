@@ -32,7 +32,7 @@ select {
   z-index: 2;
   display: grid;
   grid-template-columns:
-    minmax(190px, 0.9fr) auto auto auto auto minmax(220px, 0.8fr)
+    minmax(190px, 0.9fr) auto auto auto auto minmax(300px, 1.2fr)
     minmax(150px, 0.45fr);
   gap: 12px;
   align-items: center;
@@ -111,6 +111,38 @@ select {
 .scrubber input {
   width: 100%;
   accent-color: #f2bd5f;
+}
+
+.activity-scrubber {
+  width: 100%;
+  min-width: 280px;
+  height: 38px;
+  overflow: hidden;
+  border: 1px solid rgba(234, 241, 237, 0.16);
+  border-radius: 6px;
+  background: #101411;
+  cursor: ew-resize;
+}
+
+.activity-scrubber svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.activity-area {
+  fill: rgba(32, 130, 120, 0.42);
+}
+
+.activity-line {
+  fill: none;
+  stroke: rgba(234, 241, 237, 0.62);
+  stroke-width: 2;
+}
+
+.activity-cursor {
+  stroke: #f2bd5f;
+  stroke-width: 3;
 }
 
 .map-stage {

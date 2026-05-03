@@ -62,6 +62,7 @@ class PlaybackDataStore:
                 "date": day.isoformat(),
                 "stations": [],
                 "trips": [],
+                "activity": empty_activity_bins(),
                 "summary": {
                     "totalTrips": 0,
                     "matchedTrips": 0,
@@ -112,6 +113,7 @@ class PlaybackDataStore:
             "date": day.isoformat(),
             "stations": station_payload(station_matches),
             "trips": trip_payload(matched),
+            "activity": activity_payload(matched),
             "summary": {
                 "totalTrips": trips.height,
                 "matchedTrips": matched.height,
@@ -278,6 +280,36 @@ def trip_payload(trips: pl.DataFrame) -> list[dict[str, Any]]:
             }
         )
     return rows
+
+
+def activity_payload(trips: pl.DataFrame, bin_seconds: int = 300) -> list[dict[str, int]]:
+    bins = empty_activity_bins(bin_seconds)
+    if trips.is_empty():
+        return bins
+
+    counts = [0 for _ in bins]
+    max_time = 24 * 60 * 60 - 1
+    for row in trips.iter_rows(named=True):
+        start = seconds_since_midnight(row["start_at"])
+        end = min(max_time, seconds_since_midnight(row["end_at"]))
+        if end < start:
+            end = min(max_time, start + int(row["duration_seconds"]))
+        start_index = max(0, start // bin_seconds)
+        end_index = min(len(counts) - 1, end // bin_seconds)
+        for index in range(start_index, end_index + 1):
+            counts[index] += 1
+
+    return [
+        {
+            "time": bin_item["time"],
+            "activeTrips": count,
+        }
+        for bin_item, count in zip(bins, counts)
+    ]
+
+
+def empty_activity_bins(bin_seconds: int = 300) -> list[dict[str, int]]:
+    return [{"time": second, "activeTrips": 0} for second in range(0, 24 * 60 * 60, bin_seconds)]
 
 
 def seconds_since_midnight(value: datetime) -> int:

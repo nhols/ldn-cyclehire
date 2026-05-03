@@ -32,10 +32,16 @@ export type PlaybackSummary = {
   stationCount: number;
 };
 
+export type ActivityPoint = {
+  time: number;
+  activeTrips: number;
+};
+
 export type PlaybackResponse = {
   date: string;
   stations: PlaybackStation[];
   trips: PlaybackTrip[];
+  activity: ActivityPoint[];
   summary: PlaybackSummary;
 };
 

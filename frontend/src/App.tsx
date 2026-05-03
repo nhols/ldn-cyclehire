@@ -3,6 +3,7 @@ import DeckGL from "@deck.gl/react";
 import { PathLayer, ScatterplotLayer } from "@deck.gl/layers";
 import { Map } from "react-map-gl/maplibre";
 import { Pause, Play, RotateCcw } from "lucide-react";
+import { ActivityScrubber } from "./ActivityScrubber";
 import { fetchDateRange, fetchPlayback } from "./api";
 import { curvedPath, formatClock, slicePathWindow } from "./paths";
 import type { PlaybackResponse, PlaybackStation, PlaybackTrip } from "./types";
@@ -205,13 +206,10 @@ export function App() {
 
         <label className="scrubber">
           <span>Time</span>
-          <input
-            type="range"
-            min={0}
-            max={86399}
-            step={60}
-            value={currentTime}
-            onChange={(event) => setCurrentTime(Number(event.target.value))}
+          <ActivityScrubber
+            activity={playback?.activity ?? []}
+            currentTime={currentTime}
+            onChange={setCurrentTime}
           />
         </label>
 
