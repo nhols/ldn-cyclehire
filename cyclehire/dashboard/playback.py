@@ -3,13 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from functools import cached_property
+import json
 from pathlib import Path
 from typing import Any
 
 import polars as pl
 
 from cyclehire.bikepoints.paths import bikepoints_parquet_path
-from cyclehire.bikepoints.stage import name_key, numeric_key
+from cyclehire.routes.paths import google_bicycle_routes_parquet_path
+from cyclehire.stations import BikePointLookup, make_station_key, station_key, string_or_none
 
 
 @dataclass(frozen=True)
@@ -27,14 +29,31 @@ class PlaybackDataStore:
     def bikepoints(self) -> pl.DataFrame:
         path = self.data_dir / bikepoints_parquet_path()
         if not path.exists():
-            raise FileNotFoundError(
-                f"BikePoint metadata not found at {path}. Run `cyclehire bikepoints` first."
-            )
+            raise FileNotFoundError(f"BikePoint metadata not found at {path}. Run `cyclehire bikepoints` first.")
         return pl.read_parquet(path)
 
     @cached_property
     def bikepoint_lookup(self) -> BikePointLookup:
         return BikePointLookup.from_frame(self.bikepoints)
+
+    @cached_property
+    def route_lookup(self) -> dict[tuple[str, str], list[list[float]]]:
+        path = self.data_dir / google_bicycle_routes_parquet_path()
+        if not path.exists():
+            return {}
+
+        routes = pl.read_parquet(path).filter(
+            (pl.col("error").is_null() | (pl.col("error") == "null"))
+            & pl.col("geometry").is_not_null()
+            & (pl.col("geometry") != "null")
+        )
+        lookup: dict[tuple[str, str], list[list[float]]] = {}
+        for row in routes.iter_rows(named=True):
+            geometry = json.loads(row["geometry"])
+            coordinates = geometry.get("coordinates") if isinstance(geometry, dict) else None
+            if coordinates:
+                lookup[(row["pair_from"], row["pair_to"])] = coordinates
+        return lookup
 
     def date_range(self) -> dict[str, Any]:
         summary = (
@@ -82,6 +101,7 @@ class PlaybackDataStore:
                     pl.col("station_key").alias("start_station_key"),
                     pl.col("station_id").alias("matched_start_station_id"),
                     pl.col("station_name").alias("matched_start_station_name"),
+                    pl.col("bikepoint_id").alias("start_bikepoint_id"),
                     pl.col("lat").alias("start_lat"),
                     pl.col("lon").alias("start_lon"),
                     pl.col("match_method").alias("start_match_method"),
@@ -94,6 +114,7 @@ class PlaybackDataStore:
                     pl.col("station_key").alias("end_station_key"),
                     pl.col("station_id").alias("matched_end_station_id"),
                     pl.col("station_name").alias("matched_end_station_name"),
+                    pl.col("bikepoint_id").alias("end_bikepoint_id"),
                     pl.col("lat").alias("end_lat"),
                     pl.col("lon").alias("end_lon"),
                     pl.col("match_method").alias("end_match_method"),
@@ -112,13 +133,14 @@ class PlaybackDataStore:
         return {
             "date": day.isoformat(),
             "stations": station_payload(station_matches),
-            "trips": trip_payload(matched),
+            "trips": trip_payload(matched, self.route_lookup),
             "activity": activity_payload(matched),
             "summary": {
                 "totalTrips": trips.height,
                 "matchedTrips": matched.height,
                 "unmatchedTrips": trips.height - matched.height,
                 "stationCount": station_matches.filter(pl.col("lat").is_not_null()).height,
+                "routedTrips": routed_trip_count(matched, self.route_lookup),
             },
         }
 
@@ -187,59 +209,6 @@ class PlaybackDataStore:
         return pl.DataFrame(rows)
 
 
-@dataclass(frozen=True)
-class BikePointMatch:
-    method: str
-    row: dict[str, Any]
-
-
-@dataclass(frozen=True)
-class BikePointLookup:
-    bikepoint_number: dict[str, dict[str, Any]]
-    terminal_name: dict[str, dict[str, Any]]
-    common_name: dict[str, dict[str, Any]]
-
-    @classmethod
-    def from_frame(cls, frame: pl.DataFrame) -> BikePointLookup:
-        return cls(
-            bikepoint_number=lookup(frame, "bikepoint_number_key"),
-            terminal_name=lookup(frame, "terminal_name_key"),
-            common_name=lookup(frame, "common_name_key"),
-        )
-
-    def match(self, station_id: str | None, station_name: str | None) -> BikePointMatch | None:
-        id_key = numeric_key(station_id)
-        station_name_key = name_key(station_name)
-        if id_key and id_key in self.bikepoint_number:
-            return BikePointMatch("bikepoint_number", self.bikepoint_number[id_key])
-        if id_key and id_key in self.terminal_name:
-            return BikePointMatch("terminal_name", self.terminal_name[id_key])
-        if station_name_key and station_name_key in self.common_name:
-            return BikePointMatch("common_name", self.common_name[station_name_key])
-        return None
-
-
-def lookup(frame: pl.DataFrame, key_column: str) -> dict[str, dict[str, Any]]:
-    rows: dict[str, dict[str, Any]] = {}
-    for row in frame.filter(pl.col(key_column).is_not_null()).iter_rows(named=True):
-        key = row[key_column]
-        if key and key not in rows:
-            rows[key] = row
-    return rows
-
-
-def station_key(id_column: str, name_column: str) -> pl.Expr:
-    return (
-        pl.col(id_column).fill_null("")
-        + pl.lit("\u001f")
-        + pl.col(name_column).fill_null("")
-    )
-
-
-def make_station_key(station_id: str | None, station_name: str | None) -> str:
-    return f"{station_id or ''}\u001f{station_name or ''}"
-
-
 def station_payload(stations: pl.DataFrame) -> list[dict[str, Any]]:
     matched = stations.filter(pl.col("lat").is_not_null() & pl.col("lon").is_not_null())
     return [
@@ -256,13 +225,17 @@ def station_payload(stations: pl.DataFrame) -> list[dict[str, Any]]:
     ]
 
 
-def trip_payload(trips: pl.DataFrame) -> list[dict[str, Any]]:
+def trip_payload(
+    trips: pl.DataFrame,
+    route_lookup: dict[tuple[str, str], list[list[float]]],
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for row in trips.sort("start_at").iter_rows(named=True):
         start_seconds = seconds_since_midnight(row["start_at"])
         end_seconds = seconds_since_midnight(row["end_at"])
         if end_seconds < start_seconds:
             end_seconds = start_seconds + int(row["duration_seconds"])
+        route_path = route_path_for_trip(row, route_lookup)
         rows.append(
             {
                 "id": row["journey_id"],
@@ -277,9 +250,38 @@ def trip_payload(trips: pl.DataFrame) -> list[dict[str, Any]]:
                 "toStationName": row["end_station_name"],
                 "fromCoord": [row["start_lon"], row["start_lat"]],
                 "toCoord": [row["end_lon"], row["end_lat"]],
+                "path": route_path,
             }
         )
     return rows
+
+
+def routed_trip_count(
+    trips: pl.DataFrame,
+    route_lookup: dict[tuple[str, str], list[list[float]]],
+) -> int:
+    if not route_lookup or trips.is_empty():
+        return 0
+    return sum(1 for row in trips.iter_rows(named=True) if route_path_for_trip(row, route_lookup))
+
+
+def route_path_for_trip(
+    row: dict[str, Any],
+    route_lookup: dict[tuple[str, str], list[list[float]]],
+) -> list[list[float]] | None:
+    start_id = row["start_bikepoint_id"]
+    end_id = row["end_bikepoint_id"]
+    if not start_id or not end_id or start_id == end_id:
+        return None
+
+    pair_from = min(start_id, end_id)
+    pair_to = max(start_id, end_id)
+    path = route_lookup.get((pair_from, pair_to))
+    if not path:
+        return None
+    if start_id == pair_from:
+        return path
+    return list(reversed(path))
 
 
 def activity_payload(trips: pl.DataFrame, bin_seconds: int = 300) -> list[dict[str, int]]:
@@ -314,10 +316,3 @@ def empty_activity_bins(bin_seconds: int = 300) -> list[dict[str, int]]:
 
 def seconds_since_midnight(value: datetime) -> int:
     return value.hour * 3600 + value.minute * 60 + value.second
-
-
-def string_or_none(value: Any) -> str | None:
-    if value is None:
-        return None
-    string_value = str(value).strip()
-    return string_value or None

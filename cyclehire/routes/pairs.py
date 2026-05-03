@@ -8,7 +8,7 @@ from typing import Any
 import polars as pl
 
 from cyclehire.bikepoints.paths import bikepoints_parquet_path
-from cyclehire.dashboard.playback import BikePointLookup, make_station_key, string_or_none
+from cyclehire.stations import BikePointLookup, make_station_key, string_or_none
 
 
 def ranked_route_pairs(data_dir: Path, route_date: date | None = None) -> pl.DataFrame:

@@ -23,6 +23,7 @@ export type PlaybackTrip = {
   toStationName: string;
   fromCoord: Coord;
   toCoord: Coord;
+  path: Coord[] | null;
 };
 
 export type PlaybackSummary = {
@@ -30,6 +31,7 @@ export type PlaybackSummary = {
   matchedTrips: number;
   unmatchedTrips: number;
   stationCount: number;
+  routedTrips?: number;
 };
 
 export type ActivityPoint = {

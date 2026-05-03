@@ -161,7 +161,7 @@ select {
   bottom: 14px;
   z-index: 1;
   display: grid;
-  grid-template-columns: repeat(4, minmax(86px, 1fr));
+  grid-template-columns: repeat(5, minmax(86px, 1fr));
   gap: 1px;
   overflow: hidden;
   border: 1px solid rgba(234, 241, 237, 0.14);

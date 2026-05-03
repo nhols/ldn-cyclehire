@@ -104,10 +104,11 @@ export function App() {
       .filter((trip) => trip.start <= currentTime && trip.end >= currentTime)
       .map((trip): ActivePath => {
         const progress = (currentTime - trip.start) / Math.max(1, trip.end - trip.start);
+        const path = trip.path ?? curvedPath(trip.fromCoord, trip.toCoord);
         return {
           id: trip.id,
           progress,
-          path: slicePathWindow(curvedPath(trip.fromCoord, trip.toCoord), progress, tailLength / 100)
+          path: slicePathWindow(path, progress, tailLength / 100)
         };
       });
   }, [playback, currentTime, tailLength]);
@@ -233,6 +234,7 @@ export function App() {
         <aside className="stats-panel">
           <Metric label="Journeys" value={summary?.matchedTrips ?? 0} />
           <Metric label="Active" value={activeTrips} />
+          <Metric label="Routed" value={summary?.routedTrips ?? 0} />
           <Metric label="Stations" value={summary?.stationCount ?? 0} />
           <Metric label="Unmatched" value={summary?.unmatchedTrips ?? 0} />
         </aside>
