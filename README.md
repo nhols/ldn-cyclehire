@@ -204,3 +204,31 @@ data/reference/bikepoints/
   bikepoints.parquet
   station_match_samples.parquet
 ```
+
+Dashboard proof of concept
+--------------------------
+
+The dashboard is split into a reusable data layer, a thin API layer, and a
+separate frontend:
+
+```text
+cyclehire/dashboard/  # Parquet/BikePoint playback data loading
+cyclehire/api/        # FastAPI endpoints only
+frontend/             # Vite + React + MapLibre + deck.gl UI
+```
+
+Run the API:
+
+```sh
+uv run uvicorn cyclehire.api.app:app --reload
+```
+
+Run the frontend:
+
+```sh
+cd frontend
+npm install
+npm run dev
+```
+
+The frontend dev server proxies `/api` requests to `http://127.0.0.1:8000`.
