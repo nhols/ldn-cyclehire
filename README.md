@@ -239,13 +239,13 @@ Google bicycle route cache
 Fetch bicycle route geometries into the global route cache:
 
 ```sh
-GOOGLE_MAPS_API_KEY="..." uv run python scripts/fetch_google_bicycle_routes.py --date 2025-06-18 --limit 10000
+GOOGLE_MAPS_API_KEY="..." uv run cyclehire google-routes --date 2025-06-18 --limit 10000
 ```
 
 Omit `--date` to rank route candidates across all validated trips:
 
 ```sh
-GOOGLE_MAPS_API_KEY="..." uv run python scripts/fetch_google_bicycle_routes.py --limit 10000
+GOOGLE_MAPS_API_KEY="..." uv run cyclehire google-routes --limit 10000
 ```
 
 The cache is global, even when candidates are chosen from a single day:

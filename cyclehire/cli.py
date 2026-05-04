@@ -1,4 +1,5 @@
 import logging
+import os
 from dataclasses import dataclass
 from datetime import date
 from enum import Enum
@@ -10,6 +11,7 @@ import typer
 from cyclehire.bikepoints import BikePointsConfig, run_bikepoints_pipeline
 from cyclehire.normalize import NormalizePipelineConfig, run_normalize_pipeline
 from cyclehire.raw import RawPipelineConfig, run_raw_pipeline
+from cyclehire.routes import GoogleBicycleRoutesConfig, run_google_bicycle_routes
 from cyclehire.validate import ValidatePipelineConfig, run_validate_pipeline
 
 
@@ -166,6 +168,43 @@ def bikepoints(
         BikePointsConfig(
             data_dir=cli_context.data_dir,
             sample_dates=parse_sample_dates(sample_date),
+        )
+    )
+
+
+@app.command()
+def google_routes(
+    context: typer.Context,
+    route_date: Annotated[
+        str | None,
+        typer.Option(
+            "--date",
+            metavar="YYYY-MM-DD",
+            help="Optional trip date for ranking route candidates. Omit to rank all dates.",
+        ),
+    ] = None,
+    limit: Annotated[
+        int,
+        typer.Option("--limit", help="Maximum candidate pairs to fetch."),
+    ] = 10_000,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Print pending pairs without fetching."),
+    ] = False,
+    sleep_seconds: Annotated[
+        float,
+        typer.Option("--sleep-seconds", help="Optional delay between Google Routes API requests."),
+    ] = 0.0,
+) -> None:
+    cli_context = _cli_context(context)
+    run_google_bicycle_routes(
+        GoogleBicycleRoutesConfig(
+            data_dir=cli_context.data_dir,
+            api_key=os.environ.get("GOOGLE_MAPS_API_KEY"),
+            route_date=date.fromisoformat(route_date) if route_date else None,
+            limit=limit,
+            dry_run=dry_run,
+            sleep_seconds=sleep_seconds,
         )
     )
 
