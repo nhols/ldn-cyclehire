@@ -18,11 +18,18 @@ const LONDON_VIEW = {
 
 const MAP_STYLE = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
 const SPEEDS = [1, 10, 60, 180, 600];
+const ARRIVAL_FLASH_SECONDS = 90;
 
 type ActivePath = {
   id: string;
   path: [number, number][];
   progress: number;
+};
+
+type ArrivalFlash = {
+  id: string;
+  coord: [number, number];
+  age: number;
 };
 
 type HoverInfo = {
@@ -113,6 +120,19 @@ export function App() {
       });
   }, [playback, currentTime, tailLength]);
 
+  const arrivalFlashes = useMemo(() => {
+    if (!playback) return [];
+    return playback.trips
+      .filter((trip) => trip.end <= currentTime && trip.end >= currentTime - ARRIVAL_FLASH_SECONDS)
+      .map(
+        (trip): ArrivalFlash => ({
+          id: trip.id,
+          coord: trip.toCoord,
+          age: currentTime - trip.end
+        })
+      );
+  }, [playback, currentTime]);
+
   const layers = useMemo(
     () => [
       new ScatterplotLayer<PlaybackStation>({
@@ -147,9 +167,21 @@ export function App() {
         widthMinPixels: 2,
         jointRounded: true,
         capRounded: true
+      }),
+      new ScatterplotLayer<ArrivalFlash>({
+        id: "arrival-flashes",
+        data: arrivalFlashes,
+        getPosition: (item) => item.coord,
+        getRadius: (item) => 34 + (item.age / ARRIVAL_FLASH_SECONDS) * 130,
+        getFillColor: (item) => [250, 188, 72, Math.max(0, 90 - item.age)],
+        getLineColor: (item) => [255, 238, 184, Math.max(0, 220 - item.age * 2)],
+        lineWidthMinPixels: 2,
+        radiusUnits: "meters",
+        stroked: true,
+        filled: true
       })
     ],
-    [activePaths, playback]
+    [activePaths, arrivalFlashes, playback]
   );
 
   const activeTrips = activePaths.length;
