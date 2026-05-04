@@ -9,18 +9,18 @@ import { curvedPath, formatClock, slicePathWindow } from "./paths";
 import type { PlaybackResponse, PlaybackStation, PlaybackTrip } from "./types";
 
 const LONDON_VIEW = {
-  longitude: -0.12,
-  latitude: 51.51,
-  zoom: 11.4,
-  pitch: 36,
+  longitude: -0.11,
+  latitude: 51.495,
+  zoom: 11.68,
+  pitch: 0,
   bearing: -8
 };
 
 const MAP_STYLE = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
-const SPEEDS = [1, 10, 60, 180, 600];
+const SPEEDS = [1, 10, 60, 180, 600, 1200, 2400];
 const ARRIVAL_FLASH_SECONDS = 90;
-const DEFAULT_ROUTED_COLOR = "#fabc48";
-const DEFAULT_UNROUTED_COLOR = "#52b4d2";
+const DEFAULT_ROUTED_COLOR = "#467cfb";
+const DEFAULT_UNROUTED_COLOR = "#ed074c";
 
 type ActivePath = {
   id: string;
