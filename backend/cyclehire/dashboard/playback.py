@@ -92,8 +92,8 @@ class PlaybackDataStore:
         }
 
     def playback_day(self, day: date) -> PlaybackPayload:
-        trips = self._trips_for_day(day)
-        if trips.is_empty():
+        frames = self.playback_frames(day)
+        if frames.trips.is_empty():
             return {
                 "date": day.isoformat(),
                 "stations": [],
@@ -107,7 +107,23 @@ class PlaybackDataStore:
                 },
             }
 
-        station_matches = self._station_matches_for_trips(trips)
+        return {
+            "date": day.isoformat(),
+            "stations": station_payload(frames.station_matches),
+            "trips": trip_payload(frames.matched, self.route_lookup),
+            "activity": activity_payload(frames.matched),
+            "summary": {
+                "totalTrips": frames.trips.height,
+                "matchedTrips": frames.matched.height,
+                "unmatchedTrips": frames.trips.height - frames.matched.height,
+                "stationCount": frames.station_matches.filter(pl.col("lat").is_not_null()).height,
+                "routedTrips": routed_trip_count(frames.matched, self.route_lookup),
+            },
+        }
+
+    def playback_frames(self, day: date) -> PlaybackFrames:
+        trips = self._trips_for_day(day)
+        station_matches = self._station_matches_for_trips(trips) if not trips.is_empty() else empty_station_matches()
         enriched = (
             trips.with_columns(
                 start_station_key=station_key("start_station_id", "start_station_name"),
@@ -146,20 +162,7 @@ class PlaybackDataStore:
             & pl.col("end_lat").is_not_null()
             & pl.col("end_lon").is_not_null()
         )
-
-        return {
-            "date": day.isoformat(),
-            "stations": station_payload(station_matches),
-            "trips": trip_payload(matched, self.route_lookup),
-            "activity": activity_payload(matched),
-            "summary": {
-                "totalTrips": trips.height,
-                "matchedTrips": matched.height,
-                "unmatchedTrips": trips.height - matched.height,
-                "stationCount": station_matches.filter(pl.col("lat").is_not_null()).height,
-                "routedTrips": routed_trip_count(matched, self.route_lookup),
-            },
-        }
+        return PlaybackFrames(trips=trips, station_matches=station_matches, matched=matched)
 
     def _trip_scan(self) -> pl.LazyFrame:
         return pl.scan_parquet([str(path) for path in self.trip_files], extra_columns="ignore")
@@ -228,6 +231,28 @@ class PlaybackDataStore:
                 }
             )
         return pl.DataFrame(rows)
+
+
+@dataclass(frozen=True)
+class PlaybackFrames:
+    trips: pl.DataFrame
+    station_matches: pl.DataFrame
+    matched: pl.DataFrame
+
+
+def empty_station_matches() -> pl.DataFrame:
+    return pl.DataFrame(
+        schema={
+            "station_key": pl.String,
+            "station_id": pl.String,
+            "station_name": pl.String,
+            "trip_count": pl.Int64,
+            "match_method": pl.String,
+            "bikepoint_id": pl.String,
+            "lat": pl.Float64,
+            "lon": pl.Float64,
+        }
+    )
 
 
 def station_payload(stations: pl.DataFrame) -> list[StationPayload]:
@@ -312,6 +337,22 @@ def route_path_for_trip(
     if start_id == pair_from:
         return path
     return list(reversed(path))
+
+
+def route_key_for_trip(
+    row: MatchedTripRow,
+    route_lookup: RouteLookup,
+) -> tuple[str, bool] | None:
+    start_id = row["start_bikepoint_id"]
+    end_id = row["end_bikepoint_id"]
+    if not start_id or not end_id or start_id == end_id:
+        return None
+
+    pair_from = min(start_id, end_id)
+    pair_to = max(start_id, end_id)
+    if (pair_from, pair_to) not in route_lookup:
+        return None
+    return f"{pair_from}|{pair_to}", start_id != pair_from
 
 
 def activity_payload(trips: pl.DataFrame, bin_seconds: int = 300) -> list[ActivityPoint]:

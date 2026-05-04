@@ -2,9 +2,8 @@ Cycle Hire
 ==========
 
 Tools for ingesting, validating, and visualising TfL cycle hire usage data.
-
-The app includes a Python backend for the data pipeline/API and a React map
-frontend for replaying cycle hire journeys over time.
+The Python app prepares static playback data, and the React frontend replays
+cycle hire journeys over a map.
 
 Prepare data
 ------------
@@ -24,6 +23,12 @@ Optional: fetch cached Google bicycle routes for smoother map playback:
 GOOGLE_MAPS_API_KEY="..." uv run cyclehire google-routes --date 2025-06-18 --limit 10000
 ```
 
+Optional: export CDN-ready static playback data:
+
+```sh
+uv run cyclehire export-cdn --date 2025-06-18
+```
+
 Run the app
 -----------
 
@@ -33,11 +38,10 @@ Install dependencies once:
 make install
 ```
 
-Start both backend and frontend dev servers:
+Export local static data and start the frontend:
 
 ```sh
 make dev
 ```
 
-The frontend runs on `http://localhost:5173` and proxies API requests to the
-FastAPI backend on `http://127.0.0.1:8000`.
+The frontend runs on `http://localhost:5173`.

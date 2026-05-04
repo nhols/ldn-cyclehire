@@ -1,14 +1,16 @@
-.PHONY: install dev backend frontend
+.PHONY: install dev export-static export-static-all frontend
 
 install:
 	uv sync
 	cd frontend && npm install
 
-dev:
-	$(MAKE) -j2 backend frontend
+dev: export-static frontend
 
-backend:
-	uv run uvicorn cyclehire.api.app:app --reload
+export-static:
+	uv run cyclehire export-cdn --date 2025-06-18 --output-dir frontend/public/data
+
+export-static-all:
+	uv run cyclehire export-cdn --output-dir frontend/public/data
 
 frontend:
 	cd frontend && npm run dev

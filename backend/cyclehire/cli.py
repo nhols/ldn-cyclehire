@@ -9,6 +9,7 @@ from typing import Annotated
 import typer
 
 from cyclehire.bikepoints import BikePointsConfig, run_bikepoints_pipeline
+from cyclehire.cdn import CdnExportConfig, run_cdn_export
 from cyclehire.normalize import NormalizePipelineConfig, run_normalize_pipeline
 from cyclehire.raw import RawPipelineConfig, run_raw_pipeline
 from cyclehire.routes import GoogleBicycleRoutesConfig, run_google_bicycle_routes
@@ -205,6 +206,37 @@ def google_routes(
             limit=limit,
             dry_run=dry_run,
             sleep_seconds=sleep_seconds,
+        )
+    )
+
+
+@app.command()
+def export_cdn(
+    context: typer.Context,
+    export_date: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--date",
+            metavar="YYYY-MM-DD",
+            help="Playback date to export. Can be passed multiple times. Omit to export all dates.",
+        ),
+    ] = None,
+    output_dir: Annotated[
+        Path,
+        typer.Option("--output-dir", help="Directory for CDN-ready static data files."),
+    ] = Path("data") / "cdn",
+    limit_days: Annotated[
+        int | None,
+        typer.Option("--limit-days", help="Maximum number of days to export, useful for smoke tests."),
+    ] = None,
+) -> None:
+    cli_context = _cli_context(context)
+    run_cdn_export(
+        CdnExportConfig(
+            data_dir=cli_context.data_dir,
+            output_dir=output_dir,
+            dates=tuple(date.fromisoformat(value) for value in export_date or ()),
+            limit_days=limit_days,
         )
     )
 

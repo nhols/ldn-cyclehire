@@ -26,6 +26,11 @@ export type PlaybackTrip = {
   path: Coord[] | null;
 };
 
+export type StaticPlaybackTrip = Omit<PlaybackTrip, "path"> & {
+  routeKey: string | null;
+  routeReversed: boolean;
+};
+
 export type PlaybackSummary = {
   totalTrips: number;
   matchedTrips: number;
@@ -51,4 +56,45 @@ export type DateRangeResponse = {
   minDate: string;
   maxDate: string;
   tripCount: number;
+};
+
+export type StaticPlaybackResponse = Omit<PlaybackResponse, "trips"> & {
+  trips: StaticPlaybackTrip[];
+};
+
+export type StaticManifest = {
+  version: number;
+  generatedAt: string;
+  dateRange: DateRangeResponse;
+  files: {
+    routes: {
+      path: string;
+      gzipPath?: string;
+      bytes?: number;
+      gzipBytes: number;
+      routeCount: number;
+    };
+    bikepoints: {
+      path: string;
+      gzipPath?: string;
+      bytes?: number;
+      gzipBytes: number;
+      stationCount: number;
+    };
+  };
+  days: Array<{
+    date: string;
+    path: string;
+    gzipPath?: string;
+    trips: number;
+    routedTrips: number;
+    bytes?: number;
+    gzipBytes: number;
+  }>;
+};
+
+export type StaticRoutesResponse = {
+  version: number;
+  encoding: string;
+  routes: Record<string, Coord[]>;
 };
