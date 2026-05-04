@@ -5,11 +5,26 @@ from datetime import date, datetime, time
 from functools import cached_property
 import json
 from pathlib import Path
-from typing import Any
+from typing import cast
 
 import polars as pl
 
 from cyclehire.bikepoints.paths import bikepoints_parquet_path
+from cyclehire.dashboard.models import (
+    ActivityPoint,
+    DateRangePayload,
+    DateRangeRow,
+    MatchedTripRow,
+    PlaybackPayload,
+    RouteCacheRow,
+    RouteGeometry,
+    RouteLookup,
+    RoutePath,
+    StationMatchRow,
+    StationPayload,
+    StationSourceRow,
+    TripPayload,
+)
 from cyclehire.routes.paths import google_bicycle_routes_parquet_path
 from cyclehire.stations import BikePointLookup, make_station_key, station_key, string_or_none
 
@@ -37,7 +52,7 @@ class PlaybackDataStore:
         return BikePointLookup.from_frame(self.bikepoints)
 
     @cached_property
-    def route_lookup(self) -> dict[tuple[str, str], list[list[float]]]:
+    def route_lookup(self) -> RouteLookup:
         path = self.data_dir / google_bicycle_routes_parquet_path()
         if not path.exists():
             return {}
@@ -47,25 +62,27 @@ class PlaybackDataStore:
             & pl.col("geometry").is_not_null()
             & (pl.col("geometry") != "null")
         )
-        lookup: dict[tuple[str, str], list[list[float]]] = {}
-        for row in routes.iter_rows(named=True):
-            geometry = json.loads(row["geometry"])
-            coordinates = geometry.get("coordinates") if isinstance(geometry, dict) else None
+        lookup: RouteLookup = {}
+        for raw_row in routes.iter_rows(named=True):
+            row = cast(RouteCacheRow, raw_row)
+            geometry = cast(RouteGeometry, json.loads(row["geometry"]))
+            coordinates = geometry.get("coordinates")
             if coordinates:
                 lookup[(row["pair_from"], row["pair_to"])] = coordinates
         return lookup
 
-    def date_range(self) -> dict[str, Any]:
-        summary = (
+    def date_range(self) -> DateRangePayload:
+        summary_frame = cast(
+            pl.DataFrame,
             self._trip_scan()
             .select(
                 pl.col("start_at").min().alias("min_start"),
                 pl.col("start_at").max().alias("max_start"),
                 pl.len().alias("trip_count"),
             )
-            .collect()
-            .row(0, named=True)
+            .collect(),
         )
+        summary = cast(DateRangeRow, summary_frame.row(0, named=True))
         min_start = summary["min_start"]
         max_start = summary["max_start"]
         return {
@@ -74,7 +91,7 @@ class PlaybackDataStore:
             "tripCount": summary["trip_count"],
         }
 
-    def playback_day(self, day: date) -> dict[str, Any]:
+    def playback_day(self, day: date) -> PlaybackPayload:
         trips = self._trips_for_day(day)
         if trips.is_empty():
             return {
@@ -150,7 +167,8 @@ class PlaybackDataStore:
     def _trips_for_day(self, day: date) -> pl.DataFrame:
         start_at = datetime.combine(day, time.min)
         end_at = datetime.combine(day, time.max)
-        return (
+        return cast(
+            pl.DataFrame,
             self._trip_scan()
             .filter((pl.col("start_at") >= start_at) & (pl.col("start_at") <= end_at))
             .select(
@@ -166,7 +184,7 @@ class PlaybackDataStore:
                 "duration_seconds",
             )
             .filter(pl.col("end_station_name").is_not_null())
-            .collect()
+            .collect(),
         )
 
     def _station_matches_for_trips(self, trips: pl.DataFrame) -> pl.DataFrame:
@@ -189,10 +207,13 @@ class PlaybackDataStore:
             .sort("trip_count", descending=True)
         )
 
-        rows: list[dict[str, Any]] = []
-        for station in stations.iter_rows(named=True):
+        rows: list[StationMatchRow] = []
+        for raw_station in stations.iter_rows(named=True):
+            station = cast(StationSourceRow, raw_station)
             station_id = string_or_none(station["station_id"])
             station_name = string_or_none(station["station_name"])
+            if station_name is None:
+                continue
             match = self.bikepoint_lookup.match(station_id, station_name)
             rows.append(
                 {
@@ -209,28 +230,35 @@ class PlaybackDataStore:
         return pl.DataFrame(rows)
 
 
-def station_payload(stations: pl.DataFrame) -> list[dict[str, Any]]:
+def station_payload(stations: pl.DataFrame) -> list[StationPayload]:
     matched = stations.filter(pl.col("lat").is_not_null() & pl.col("lon").is_not_null())
-    return [
-        {
+    payload: list[StationPayload] = []
+    for raw_row in matched.iter_rows(named=True):
+        row = cast(StationMatchRow, raw_row)
+        lat = row["lat"]
+        lon = row["lon"]
+        if lat is None or lon is None:
+            continue
+        station: StationPayload = {
             "id": row["station_key"],
             "stationId": row["station_id"],
             "name": row["station_name"],
             "bikepointId": row["bikepoint_id"],
-            "coord": [row["lon"], row["lat"]],
+            "coord": [lon, lat],
             "tripCount": row["trip_count"],
             "matchMethod": row["match_method"],
         }
-        for row in matched.iter_rows(named=True)
-    ]
+        payload.append(station)
+    return payload
 
 
 def trip_payload(
     trips: pl.DataFrame,
-    route_lookup: dict[tuple[str, str], list[list[float]]],
-) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for row in trips.sort("start_at").iter_rows(named=True):
+    route_lookup: RouteLookup,
+) -> list[TripPayload]:
+    rows: list[TripPayload] = []
+    for raw_row in trips.sort("start_at").iter_rows(named=True):
+        row = cast(MatchedTripRow, raw_row)
         start_seconds = seconds_since_midnight(row["start_at"])
         end_seconds = seconds_since_midnight(row["end_at"])
         if end_seconds < start_seconds:
@@ -258,17 +286,19 @@ def trip_payload(
 
 def routed_trip_count(
     trips: pl.DataFrame,
-    route_lookup: dict[tuple[str, str], list[list[float]]],
+    route_lookup: RouteLookup,
 ) -> int:
     if not route_lookup or trips.is_empty():
         return 0
-    return sum(1 for row in trips.iter_rows(named=True) if route_path_for_trip(row, route_lookup))
+    return sum(
+        1 for raw_row in trips.iter_rows(named=True) if route_path_for_trip(cast(MatchedTripRow, raw_row), route_lookup)
+    )
 
 
 def route_path_for_trip(
-    row: dict[str, Any],
-    route_lookup: dict[tuple[str, str], list[list[float]]],
-) -> list[list[float]] | None:
+    row: MatchedTripRow,
+    route_lookup: RouteLookup,
+) -> RoutePath | None:
     start_id = row["start_bikepoint_id"]
     end_id = row["end_bikepoint_id"]
     if not start_id or not end_id or start_id == end_id:
@@ -284,14 +314,15 @@ def route_path_for_trip(
     return list(reversed(path))
 
 
-def activity_payload(trips: pl.DataFrame, bin_seconds: int = 300) -> list[dict[str, int]]:
+def activity_payload(trips: pl.DataFrame, bin_seconds: int = 300) -> list[ActivityPoint]:
     bins = empty_activity_bins(bin_seconds)
     if trips.is_empty():
         return bins
 
     counts = [0 for _ in bins]
     max_time = 24 * 60 * 60 - 1
-    for row in trips.iter_rows(named=True):
+    for raw_row in trips.iter_rows(named=True):
+        row = cast(MatchedTripRow, raw_row)
         start = seconds_since_midnight(row["start_at"])
         end = min(max_time, seconds_since_midnight(row["end_at"]))
         if end < start:
@@ -310,7 +341,7 @@ def activity_payload(trips: pl.DataFrame, bin_seconds: int = 300) -> list[dict[s
     ]
 
 
-def empty_activity_bins(bin_seconds: int = 300) -> list[dict[str, int]]:
+def empty_activity_bins(bin_seconds: int = 300) -> list[ActivityPoint]:
     return [{"time": second, "activeTrips": 0} for second in range(0, 24 * 60 * 60, bin_seconds)]
 
 
