@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import DeckGL from "@deck.gl/react";
 import { PathLayer, ScatterplotLayer } from "@deck.gl/layers";
 import { Map } from "react-map-gl/maplibre";
-import { Settings2, Pause, Play, RotateCcw } from "lucide-react";
+import { Monitor, Moon, Settings2, Pause, Play, RotateCcw, Sun } from "lucide-react";
 import { ActivityScrubber } from "./ActivityScrubber";
 import { fetchDateRange, fetchPlayback } from "./api";
 import { curvedPath, formatClock, slicePathWindow } from "./paths";
@@ -16,11 +16,18 @@ const LONDON_VIEW = {
   bearing: -8
 };
 
-const MAP_STYLE = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
+const MAP_STYLES = {
+  dark: "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
+  light: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
+} satisfies Record<ResolvedTheme, string>;
 const SPEEDS = [1, 10, 60, 180, 600, 1200, 2400];
 const ARRIVAL_FLASH_SECONDS = 90;
 const DEFAULT_ROUTED_COLOR = "#467cfb";
 const DEFAULT_UNROUTED_COLOR = "#ed074c";
+const THEME_STORAGE_KEY = "cyclehire-theme";
+
+type ThemePreference = "system" | "dark" | "light";
+type ResolvedTheme = "dark" | "light";
 
 type ActivePath = {
   id: string;
@@ -42,6 +49,8 @@ type HoverInfo = {
 };
 
 export function App() {
+  const [themePreference, setThemePreference] = useState<ThemePreference>(readStoredTheme);
+  const [systemTheme, setSystemTheme] = useState<ResolvedTheme>(getSystemTheme);
   const [selectedDate, setSelectedDate] = useState("2025-06-18");
   const [minDate, setMinDate] = useState("");
   const [maxDate, setMaxDate] = useState("");
@@ -59,6 +68,25 @@ export function App() {
   const [hoverInfo, setHoverInfo] = useState<HoverInfo | null>(null);
   const frameRef = useRef<number | null>(null);
   const lastTickRef = useRef<number | null>(null);
+  const resolvedTheme = themePreference === "system" ? systemTheme : themePreference;
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const updateSystemTheme = () => setSystemTheme(media.matches ? "dark" : "light");
+
+    updateSystemTheme();
+    media.addEventListener("change", updateSystemTheme);
+    return () => media.removeEventListener("change", updateSystemTheme);
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = resolvedTheme;
+    document.documentElement.style.colorScheme = resolvedTheme;
+  }, [resolvedTheme]);
+
+  useEffect(() => {
+    window.localStorage.setItem(THEME_STORAGE_KEY, themePreference);
+  }, [themePreference]);
 
   useEffect(() => {
     fetchDateRange()
@@ -274,6 +302,39 @@ export function App() {
           </button>
           {traceMenuOpen && (
             <div className="trace-popover" role="dialog" aria-label="Trace settings">
+              <div className="popover-group">
+                <span>Theme</span>
+                <div className="theme-toggle" role="group" aria-label="Theme preference">
+                  <button
+                    className={themePreference === "light" ? "active" : ""}
+                    type="button"
+                    aria-label="Use light theme"
+                    title="Light"
+                    onClick={() => setThemePreference("light")}
+                  >
+                    <Sun size={16} />
+                  </button>
+                  <button
+                    className={themePreference === "system" ? "active" : ""}
+                    type="button"
+                    aria-label="Use system theme"
+                    title={`System (${resolvedTheme})`}
+                    onClick={() => setThemePreference("system")}
+                  >
+                    <Monitor size={16} />
+                  </button>
+                  <button
+                    className={themePreference === "dark" ? "active" : ""}
+                    type="button"
+                    aria-label="Use dark theme"
+                    title="Dark"
+                    onClick={() => setThemePreference("dark")}
+                  >
+                    <Moon size={16} />
+                  </button>
+                </div>
+              </div>
+
               <label className="popover-slider">
                 <span>Tail {tailLength}%</span>
                 <input
@@ -319,7 +380,7 @@ export function App() {
 
       <section className="map-stage" aria-label="Cycle hire map playback">
         <DeckGL initialViewState={LONDON_VIEW} controller layers={layers}>
-          <Map mapStyle={MAP_STYLE} reuseMaps />
+          <Map mapStyle={MAP_STYLES[resolvedTheme]} reuseMaps />
         </DeckGL>
         <aside className="stats-panel">
           <Metric label="Journeys" value={summary?.matchedTrips ?? 0} />
@@ -372,4 +433,17 @@ function hexToRgb(hex: string): [number, number, number] {
 
 function withAlpha(rgb: [number, number, number], alpha: number): [number, number, number, number] {
   return [rgb[0], rgb[1], rgb[2], alpha];
+}
+
+function readStoredTheme(): ThemePreference {
+  const value = window.localStorage.getItem(THEME_STORAGE_KEY);
+  return isThemePreference(value) ? value : "system";
+}
+
+function isThemePreference(value: string | null): value is ThemePreference {
+  return value === "system" || value === "dark" || value === "light";
+}
+
+function getSystemTheme(): ResolvedTheme {
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
