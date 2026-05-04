@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import DeckGL from "@deck.gl/react";
 import { PathLayer, ScatterplotLayer } from "@deck.gl/layers";
 import { Map } from "react-map-gl/maplibre";
-import { Eye, EyeOff, Pause, Play, RotateCcw } from "lucide-react";
+import { Settings2, Pause, Play, RotateCcw } from "lucide-react";
 import { ActivityScrubber } from "./ActivityScrubber";
 import { fetchDateRange, fetchPlayback } from "./api";
 import { curvedPath, formatClock, slicePathWindow } from "./paths";
@@ -19,6 +19,8 @@ const LONDON_VIEW = {
 const MAP_STYLE = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
 const SPEEDS = [1, 10, 60, 180, 600];
 const ARRIVAL_FLASH_SECONDS = 90;
+const DEFAULT_ROUTED_COLOR = "#fabc48";
+const DEFAULT_UNROUTED_COLOR = "#52b4d2";
 
 type ActivePath = {
   id: string;
@@ -48,6 +50,9 @@ export function App() {
   const [speed, setSpeed] = useState(180);
   const [tailLength, setTailLength] = useState(18);
   const [showUnrouted, setShowUnrouted] = useState(true);
+  const [routedColor, setRoutedColor] = useState(DEFAULT_ROUTED_COLOR);
+  const [unroutedColor, setUnroutedColor] = useState(DEFAULT_UNROUTED_COLOR);
+  const [traceMenuOpen, setTraceMenuOpen] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -169,8 +174,8 @@ export function App() {
         getPath: (item) => item.path,
         getColor: (item) =>
           item.routed
-            ? [250, 188, 72, 100 + Math.round(item.progress * 140)]
-            : [82, 180, 210, 55 + Math.round(item.progress * 110)],
+            ? withAlpha(hexToRgb(routedColor), 100 + Math.round(item.progress * 140))
+            : withAlpha(hexToRgb(unroutedColor), 55 + Math.round(item.progress * 110)),
         getWidth: (item) => (item.routed ? 3.5 : 2.2),
         widthMinPixels: 2,
         jointRounded: true,
@@ -189,7 +194,7 @@ export function App() {
         filled: true
       })
     ],
-    [activePaths, arrivalFlashes, playback]
+    [activePaths, arrivalFlashes, playback, routedColor, unroutedColor]
   );
 
   const activeTrips = activePaths.length;
@@ -256,29 +261,60 @@ export function App() {
           />
         </label>
 
-        <label className="scrubber tail-scrubber">
-          <span>Tail {tailLength}%</span>
-          <input
-            type="range"
-            min={4}
-            max={40}
-            step={1}
-            value={tailLength}
-            onChange={(event) => setTailLength(Number(event.target.value))}
-          />
-        </label>
+        <div className="trace-settings">
+          <button
+            className={`icon-button ${traceMenuOpen ? "active" : ""}`}
+            type="button"
+            aria-expanded={traceMenuOpen}
+            aria-label="Trace settings"
+            title="Trace settings"
+            onClick={() => setTraceMenuOpen((value) => !value)}
+          >
+            <Settings2 size={18} />
+          </button>
+          {traceMenuOpen && (
+            <div className="trace-popover" role="dialog" aria-label="Trace settings">
+              <label className="popover-slider">
+                <span>Tail {tailLength}%</span>
+                <input
+                  type="range"
+                  min={4}
+                  max={40}
+                  step={1}
+                  value={tailLength}
+                  onChange={(event) => setTailLength(Number(event.target.value))}
+                />
+              </label>
 
-        <button
-          className={`toggle-button ${showUnrouted ? "enabled" : ""}`}
-          type="button"
-          aria-pressed={showUnrouted}
-          aria-label={showUnrouted ? "Hide unrouted journeys" : "Show unrouted journeys"}
-          title={showUnrouted ? "Hide unrouted journeys" : "Show unrouted journeys"}
-          onClick={() => setShowUnrouted((value) => !value)}
-        >
-          {showUnrouted ? <Eye size={17} /> : <EyeOff size={17} />}
-          <span>Unrouted</span>
-        </button>
+              <label className="color-field">
+                <span>Routed</span>
+                <input
+                  type="color"
+                  value={routedColor}
+                  onChange={(event) => setRoutedColor(event.target.value)}
+                />
+              </label>
+
+              <label className="color-field">
+                <span>Unrouted</span>
+                <input
+                  type="color"
+                  value={unroutedColor}
+                  onChange={(event) => setUnroutedColor(event.target.value)}
+                />
+              </label>
+
+              <label className="checkbox-field">
+                <input
+                  type="checkbox"
+                  checked={showUnrouted}
+                  onChange={(event) => setShowUnrouted(event.target.checked)}
+                />
+                <span>Show unrouted</span>
+              </label>
+            </div>
+          )}
+        </div>
       </section>
 
       <section className="map-stage" aria-label="Cycle hire map playback">
@@ -323,4 +359,17 @@ function Metric({ label, value }: { label: string; value: number }) {
       <strong>{value.toLocaleString()}</strong>
     </div>
   );
+}
+
+function hexToRgb(hex: string): [number, number, number] {
+  const value = hex.replace("#", "");
+  return [
+    Number.parseInt(value.slice(0, 2), 16),
+    Number.parseInt(value.slice(2, 4), 16),
+    Number.parseInt(value.slice(4, 6), 16)
+  ];
+}
+
+function withAlpha(rgb: [number, number, number], alpha: number): [number, number, number, number] {
+  return [rgb[0], rgb[1], rgb[2], alpha];
 }
