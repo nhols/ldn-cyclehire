@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import DeckGL from "@deck.gl/react";
 import { PathLayer, ScatterplotLayer } from "@deck.gl/layers";
 import { Map } from "react-map-gl/maplibre";
-import { Pause, Play, RotateCcw } from "lucide-react";
+import { Eye, EyeOff, Pause, Play, RotateCcw } from "lucide-react";
 import { ActivityScrubber } from "./ActivityScrubber";
 import { fetchDateRange, fetchPlayback } from "./api";
 import { curvedPath, formatClock, slicePathWindow } from "./paths";
@@ -24,6 +24,7 @@ type ActivePath = {
   id: string;
   path: [number, number][];
   progress: number;
+  routed: boolean;
 };
 
 type ArrivalFlash = {
@@ -46,6 +47,7 @@ export function App() {
   const [currentTime, setCurrentTime] = useState(7 * 3600);
   const [speed, setSpeed] = useState(180);
   const [tailLength, setTailLength] = useState(18);
+  const [showUnrouted, setShowUnrouted] = useState(true);
   const [playing, setPlaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -109,16 +111,19 @@ export function App() {
     if (!playback) return [];
     return playback.trips
       .filter((trip) => trip.start <= currentTime && trip.end >= currentTime)
+      .filter((trip) => showUnrouted || trip.path)
       .map((trip): ActivePath => {
         const progress = (currentTime - trip.start) / Math.max(1, trip.end - trip.start);
+        const routed = trip.path !== null;
         const path = trip.path ?? curvedPath(trip.fromCoord, trip.toCoord);
         return {
           id: trip.id,
           progress,
+          routed,
           path: slicePathWindow(path, progress, tailLength / 100)
         };
       });
-  }, [playback, currentTime, tailLength]);
+  }, [playback, currentTime, tailLength, showUnrouted]);
 
   const arrivalFlashes = useMemo(() => {
     if (!playback) return [];
@@ -162,8 +167,11 @@ export function App() {
         id: "active-trips",
         data: activePaths,
         getPath: (item) => item.path,
-        getColor: (item) => [250, 188, 72, 90 + Math.round(item.progress * 140)],
-        getWidth: 3,
+        getColor: (item) =>
+          item.routed
+            ? [250, 188, 72, 100 + Math.round(item.progress * 140)]
+            : [82, 180, 210, 55 + Math.round(item.progress * 110)],
+        getWidth: (item) => (item.routed ? 3.5 : 2.2),
         widthMinPixels: 2,
         jointRounded: true,
         capRounded: true
@@ -185,6 +193,8 @@ export function App() {
   );
 
   const activeTrips = activePaths.length;
+  const activeRoutedTrips = activePaths.filter((path) => path.routed).length;
+  const activeUnroutedTrips = activeTrips - activeRoutedTrips;
   const summary = playback?.summary;
 
   return (
@@ -257,6 +267,18 @@ export function App() {
             onChange={(event) => setTailLength(Number(event.target.value))}
           />
         </label>
+
+        <button
+          className={`toggle-button ${showUnrouted ? "enabled" : ""}`}
+          type="button"
+          aria-pressed={showUnrouted}
+          aria-label={showUnrouted ? "Hide unrouted journeys" : "Show unrouted journeys"}
+          title={showUnrouted ? "Hide unrouted journeys" : "Show unrouted journeys"}
+          onClick={() => setShowUnrouted((value) => !value)}
+        >
+          {showUnrouted ? <Eye size={17} /> : <EyeOff size={17} />}
+          <span>Unrouted</span>
+        </button>
       </section>
 
       <section className="map-stage" aria-label="Cycle hire map playback">
@@ -266,7 +288,9 @@ export function App() {
         <aside className="stats-panel">
           <Metric label="Journeys" value={summary?.matchedTrips ?? 0} />
           <Metric label="Active" value={activeTrips} />
-          <Metric label="Routed" value={summary?.routedTrips ?? 0} />
+          <Metric label="Active routed" value={activeRoutedTrips} />
+          <Metric label="Active fallback" value={activeUnroutedTrips} />
+          <Metric label="Routed total" value={summary?.routedTrips ?? 0} />
           <Metric label="Stations" value={summary?.stationCount ?? 0} />
           <Metric label="Unmatched" value={summary?.unmatchedTrips ?? 0} />
         </aside>
