@@ -118,9 +118,10 @@ export function App() {
     setPlaying(false);
     fetchPlayback(selectedDate)
       .then((data) => {
+        const routeShardIds = routeShardIdsForTrips(data.trips);
         setPlayback(data);
         setRouteCache(new globalThis.Map());
-        setRequiredRouteShards(routeShardIdsForTrips(data.trips));
+        setRequiredRouteShards(routeShardIds);
         setLoadedRouteShardCount(0);
         setPendingPlay(false);
         const firstTrip = data.trips[0];
@@ -172,6 +173,7 @@ export function App() {
     if (!playback || !requiredRouteShards.length) return;
 
     const routeShardIds = requiredRouteShards;
+    const routeKeysForDay = routeKeysForTrips(playback.trips);
     let cancelled = false;
 
     async function loadRouteShards() {
@@ -183,7 +185,9 @@ export function App() {
           const next = new globalThis.Map(value);
           for (const payload of payloads) {
             for (const [routeKey, coordinates] of Object.entries(payload.routes)) {
-              next.set(routeKey, coordinates);
+              if (routeKeysForDay.has(routeKey)) {
+                next.set(routeKey, coordinates);
+              }
             }
           }
           return next;
@@ -678,6 +682,14 @@ function routeShardIdsForTrips(trips: PlaybackTrip[]): string[] {
         .filter((shardId): shardId is string => shardId !== null)
     )
   ];
+}
+
+function routeKeysForTrips(trips: PlaybackTrip[]): Set<string> {
+  return new Set(
+    trips
+      .map((trip) => trip.routeKey)
+      .filter((routeKey): routeKey is string => routeKey !== null)
+  );
 }
 
 
