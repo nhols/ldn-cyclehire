@@ -22,6 +22,8 @@ class StationPayload(TypedDict):
     bikepointId: str | None
     coord: Coordinate
     tripCount: int
+    departureCount: int
+    arrivalCount: int
     matchMethod: str | None
 
 
@@ -84,6 +86,8 @@ class StationMatchRow(TypedDict):
     station_id: str | None
     station_name: str
     trip_count: int
+    departure_count: int
+    arrival_count: int
     match_method: str | None
     bikepoint_id: str | None
     lat: float | None
@@ -94,6 +98,8 @@ class StationSourceRow(TypedDict):
     station_id: str | None
     station_name: str | None
     trip_count: int
+    departure_count: int
+    arrival_count: int
 
 
 class MatchedTripRow(TypedDict):

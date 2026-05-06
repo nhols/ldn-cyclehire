@@ -7,6 +7,8 @@ export type PlaybackStation = {
   bikepointId: string | null;
   coord: Coord;
   tripCount: number;
+  departureCount: number;
+  arrivalCount: number;
   matchMethod: string | null;
 };
 
@@ -23,13 +25,14 @@ export type PlaybackTrip = {
   toStationName: string;
   fromCoord: Coord;
   toCoord: Coord;
+  routeKey: string | null;
+  routeShard: string | null;
+  routeDistanceMeters: number | null;
+  routeReversed: boolean;
   path: Coord[] | null;
 };
 
-export type StaticPlaybackTrip = Omit<PlaybackTrip, "path"> & {
-  routeKey: string | null;
-  routeReversed: boolean;
-};
+export type StaticPlaybackTrip = Omit<PlaybackTrip, "path">;
 
 export type PlaybackSummary = {
   totalTrips: number;
@@ -68,11 +71,28 @@ export type StaticManifest = {
   dateRange: DateRangeResponse;
   files: {
     routes: {
-      path: string;
+      path?: string;
       gzipPath?: string;
+      provider?: string;
+      version?: string;
+      encoding?: string;
+      shardStrategy?: string;
+      shardTemplate?: string;
+      gzipShardTemplate?: string;
+      shardTargetGzipBytes?: number;
+      estimatedCompressionRatio?: number;
+      shardCount?: number;
       bytes?: number;
       gzipBytes: number;
       routeCount: number;
+      shards?: Array<{
+        id: string;
+        path: string;
+        gzipPath?: string;
+        routeCount: number;
+        bytes?: number;
+        gzipBytes: number;
+      }>;
     };
     bikepoints: {
       path: string;

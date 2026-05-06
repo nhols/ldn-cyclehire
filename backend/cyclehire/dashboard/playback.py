@@ -184,16 +184,24 @@ class PlaybackDataStore:
                     trips.select(
                         pl.col("start_station_id").alias("station_id"),
                         pl.col("start_station_name").alias("station_name"),
+                        pl.lit(1).alias("departure_count"),
+                        pl.lit(0).alias("arrival_count"),
                     ),
                     trips.select(
                         pl.col("end_station_id").alias("station_id"),
                         pl.col("end_station_name").alias("station_name"),
+                        pl.lit(0).alias("departure_count"),
+                        pl.lit(1).alias("arrival_count"),
                     ),
                 ]
             )
             .filter(pl.col("station_name").is_not_null())
             .group_by("station_id", "station_name")
-            .agg(pl.len().alias("trip_count"))
+            .agg(
+                pl.sum("departure_count").alias("departure_count"),
+                pl.sum("arrival_count").alias("arrival_count"),
+            )
+            .with_columns((pl.col("departure_count") + pl.col("arrival_count")).alias("trip_count"))
             .sort("trip_count", descending=True)
         )
 
@@ -211,6 +219,8 @@ class PlaybackDataStore:
                     "station_id": station_id,
                     "station_name": station_name,
                     "trip_count": station["trip_count"],
+                    "departure_count": station["departure_count"],
+                    "arrival_count": station["arrival_count"],
                     "match_method": match.method if match else None,
                     "bikepoint_id": match.row["bikepoint_id"] if match else None,
                     "lat": match.row["lat"] if match else None,
@@ -253,6 +263,8 @@ def empty_station_matches() -> pl.DataFrame:
             "station_id": pl.String,
             "station_name": pl.String,
             "trip_count": pl.Int64,
+            "departure_count": pl.Int64,
+            "arrival_count": pl.Int64,
             "match_method": pl.String,
             "bikepoint_id": pl.String,
             "lat": pl.Float64,
@@ -277,6 +289,8 @@ def station_payload(stations: pl.DataFrame) -> list[StationPayload]:
             "bikepointId": row["bikepoint_id"],
             "coord": [lon, lat],
             "tripCount": row["trip_count"],
+            "departureCount": row["departure_count"],
+            "arrivalCount": row["arrival_count"],
             "matchMethod": row["match_method"],
         }
         payload.append(station)

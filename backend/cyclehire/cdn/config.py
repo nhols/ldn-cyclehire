@@ -5,6 +5,9 @@ from datetime import date
 from enum import Enum
 from pathlib import Path
 
+DEFAULT_ROUTE_SHARD_TARGET_GZIP_BYTES = 1_500_000
+DEFAULT_ROUTE_SHARD_COMPRESSION_RATIO = 6.0
+
 
 class RouteProvider(str, Enum):
     all = "all"
@@ -19,3 +22,5 @@ class CdnExportConfig:
     dates: tuple[date, ...] = ()
     limit_days: int | None = None
     route_provider: RouteProvider = RouteProvider.all
+    route_shard_target_gzip_bytes: int = DEFAULT_ROUTE_SHARD_TARGET_GZIP_BYTES
+    route_shard_compression_ratio: float = DEFAULT_ROUTE_SHARD_COMPRESSION_RATIO

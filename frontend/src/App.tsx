@@ -4,9 +4,9 @@ import { PathLayer, ScatterplotLayer } from "@deck.gl/layers";
 import { Map } from "react-map-gl/maplibre";
 import { Monitor, Moon, Settings2, Pause, Play, RotateCcw, Sun } from "lucide-react";
 import { ActivityScrubber } from "./ActivityScrubber";
-import { fetchDateRange, fetchPlayback } from "./api";
+import { fetchDateRange, fetchPlayback, fetchRouteShard } from "./api";
 import { curvedPath, formatClock, slicePathWindow } from "./paths";
-import type { PlaybackResponse, PlaybackStation, PlaybackTrip } from "./types";
+import type { Coord, PlaybackResponse, PlaybackStation, PlaybackTrip } from "./types";
 
 const LONDON_VIEW = {
   longitude: -0.11,
@@ -27,6 +27,7 @@ const DEFAULT_UNROUTED_COLOR = "#ed074c";
 const DEFAULT_ORIGIN_FLASH_COLOR = "#52b4d2";
 const DEFAULT_DESTINATION_FLASH_COLOR = "#fabc48";
 const THEME_STORAGE_KEY = "cyclehire-theme";
+const ROUTE_SHARD_FETCH_CONCURRENCY = 6;
 
 type ThemePreference = "system" | "dark" | "light";
 type ResolvedTheme = "dark" | "light";
@@ -42,7 +43,7 @@ type StationFlash = {
   id: string;
   coord: [number, number];
   age: number;
-  kind: "origin" | "destination";
+  kind: "departure" | "arrival";
 };
 
 type HoverInfo = {
@@ -58,6 +59,9 @@ export function App() {
   const [minDate, setMinDate] = useState("");
   const [maxDate, setMaxDate] = useState("");
   const [playback, setPlayback] = useState<PlaybackResponse | null>(null);
+  const [routeCache, setRouteCache] = useState<globalThis.Map<string, Coord[]>>(() => new globalThis.Map());
+  const [requiredRouteShards, setRequiredRouteShards] = useState<string[]>([]);
+  const [loadedRouteShardCount, setLoadedRouteShardCount] = useState(0);
   const [currentTime, setCurrentTime] = useState(7 * 3600);
   const [speed, setSpeed] = useState(180);
   const [tailLength, setTailLength] = useState(18);
@@ -70,6 +74,7 @@ export function App() {
   const [destinationFlashColor, setDestinationFlashColor] = useState(DEFAULT_DESTINATION_FLASH_COLOR);
   const [traceMenuOpen, setTraceMenuOpen] = useState(false);
   const [playing, setPlaying] = useState(false);
+  const [pendingPlay, setPendingPlay] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [hoverInfo, setHoverInfo] = useState<HoverInfo | null>(null);
@@ -114,6 +119,10 @@ export function App() {
     fetchPlayback(selectedDate)
       .then((data) => {
         setPlayback(data);
+        setRouteCache(new globalThis.Map());
+        setRequiredRouteShards(routeShardIdsForTrips(data.trips));
+        setLoadedRouteShardCount(0);
+        setPendingPlay(false);
         const firstTrip = data.trips[0];
         setCurrentTime(firstTrip ? Math.max(0, firstTrip.start - 600) : 7 * 3600);
       })
@@ -147,15 +156,59 @@ export function App() {
     };
   }, [playing, speed]);
 
+  const routesReady =
+    playback !== null && requiredRouteShards.length === loadedRouteShardCount;
+  const routeLoading =
+    playback !== null && requiredRouteShards.length > loadedRouteShardCount;
+
+  useEffect(() => {
+    if (pendingPlay && routesReady) {
+      setPlaying(true);
+      setPendingPlay(false);
+    }
+  }, [pendingPlay, routesReady]);
+
+  useEffect(() => {
+    if (!playback || !requiredRouteShards.length) return;
+
+    const routeShardIds = requiredRouteShards;
+    let cancelled = false;
+
+    async function loadRouteShards() {
+      for (let index = 0; index < routeShardIds.length; index += ROUTE_SHARD_FETCH_CONCURRENCY) {
+        const batch = routeShardIds.slice(index, index + ROUTE_SHARD_FETCH_CONCURRENCY);
+        const payloads = await Promise.all(batch.map((shardId) => fetchRouteShard(shardId)));
+        if (cancelled) return;
+        setRouteCache((value) => {
+          const next = new globalThis.Map(value);
+          for (const payload of payloads) {
+            for (const [routeKey, coordinates] of Object.entries(payload.routes)) {
+              next.set(routeKey, coordinates);
+            }
+          }
+          return next;
+        });
+        setLoadedRouteShardCount((value) => value + batch.length);
+      }
+    }
+
+    loadRouteShards().catch((reason) => setError(String(reason)));
+
+    return () => {
+      cancelled = true;
+    };
+  }, [playback, requiredRouteShards]);
+
   const activePaths = useMemo(() => {
     if (!playback) return [];
     return playback.trips
       .filter((trip) => trip.start <= currentTime && trip.end >= currentTime)
-      .filter((trip) => showUnrouted || trip.path)
+      .filter((trip) => showUnrouted || trip.routeKey)
       .map((trip): ActivePath => {
         const progress = (currentTime - trip.start) / Math.max(1, trip.end - trip.start);
-        const routed = trip.path !== null;
-        const path = trip.path ?? curvedPath(trip.fromCoord, trip.toCoord);
+        const routed = trip.routeKey !== null;
+        const routePath = routePathForTrip(trip, routeCache);
+        const path = routePath ?? curvedPath(trip.fromCoord, trip.toCoord);
         return {
           id: trip.id,
           progress,
@@ -163,14 +216,14 @@ export function App() {
           path: slicePathWindow(path, progress, tailLength / 100)
         };
       });
-  }, [playback, currentTime, tailLength, showUnrouted]);
+  }, [playback, currentTime, routeCache, tailLength, showUnrouted]);
 
   const routedDistances = useMemo(() => {
     const distances = new globalThis.Map<string, number>();
     if (!playback) return distances;
     for (const trip of playback.trips) {
-      if (trip.path) {
-        distances.set(trip.id, pathDistanceMetres(trip.path));
+      if (trip.routeDistanceMeters !== null) {
+        distances.set(trip.id, trip.routeDistanceMeters);
       }
     }
     return distances;
@@ -182,19 +235,19 @@ export function App() {
     for (const trip of playback.trips) {
       if (showOriginFlashes && trip.start <= currentTime && trip.start >= currentTime - ARRIVAL_FLASH_SECONDS) {
         flashes.push({
-          id: `${trip.id}-origin`,
+          id: `${trip.id}-departure`,
           coord: trip.fromCoord,
           age: currentTime - trip.start,
-          kind: "origin"
+          kind: "departure"
         });
       }
 
       if (showDestinationFlashes && trip.end <= currentTime && trip.end >= currentTime - ARRIVAL_FLASH_SECONDS) {
         flashes.push({
-          id: `${trip.id}-destination`,
+          id: `${trip.id}-arrival`,
           coord: trip.toCoord,
           age: currentTime - trip.end,
-          kind: "destination"
+          kind: "arrival"
         });
       }
     }
@@ -203,14 +256,18 @@ export function App() {
 
   const runningTotals = useMemo(() => {
     if (!playback) {
-      return { journeys: 0, routedKilometres: 0 };
+      return { journeys: 0, routedJourneys: 0, unroutedJourneys: 0, routedKilometres: 0 };
     }
 
     let journeys = 0;
+    let routedJourneys = 0;
     let routedMetres = 0;
     for (const trip of playback.trips) {
       if (trip.start <= currentTime) {
         journeys += 1;
+        if (trip.routeKey !== null) {
+          routedJourneys += 1;
+        }
       }
 
       const routeDistance = routedDistances.get(trip.id);
@@ -222,6 +279,8 @@ export function App() {
 
     return {
       journeys,
+      routedJourneys,
+      unroutedJourneys: journeys - routedJourneys,
       routedKilometres: routedMetres / 1000
     };
   }, [playback, currentTime, routedDistances]);
@@ -271,12 +330,12 @@ export function App() {
         getRadius: (item) => 34 + (item.age / ARRIVAL_FLASH_SECONDS) * 130,
         getFillColor: (item) =>
           withAlpha(
-            hexToRgb(item.kind === "origin" ? originFlashColor : destinationFlashColor),
+            hexToRgb(item.kind === "departure" ? originFlashColor : destinationFlashColor),
             Math.max(0, 90 - item.age)
           ),
         getLineColor: (item) =>
           withAlpha(
-            hexToRgb(item.kind === "origin" ? originFlashColor : destinationFlashColor),
+            hexToRgb(item.kind === "departure" ? originFlashColor : destinationFlashColor),
             Math.max(0, 220 - item.age * 2)
           ),
         lineWidthMinPixels: 2,
@@ -292,6 +351,9 @@ export function App() {
   const activeRoutedTrips = activePaths.filter((path) => path.routed).length;
   const activeUnroutedTrips = activeTrips - activeRoutedTrips;
   const summary = playback?.summary;
+  const totalRoutedTrips = summary?.routedTrips ?? 0;
+  const totalTrips = summary?.matchedTrips ?? 0;
+  const totalUnroutedTrips = Math.max(0, totalTrips - totalRoutedTrips);
 
   return (
     <main className="app-shell">
@@ -301,7 +363,7 @@ export function App() {
           <span>{formatClock(currentTime)}</span>
         </div>
 
-        <label className="field">
+        <label className="field date-field">
           <span>Date</span>
           <input
             type="date"
@@ -313,17 +375,26 @@ export function App() {
         </label>
 
         <button
-          className="icon-button primary"
+          className="icon-button primary play-button"
           type="button"
-          aria-label={playing ? "Pause playback" : "Play playback"}
-          title={playing ? "Pause playback" : "Play playback"}
-          onClick={() => setPlaying((value) => !value)}
+          aria-label={playing ? "Pause playback" : routeLoading ? "Play when routes are loaded" : "Play playback"}
+          title={playing ? "Pause playback" : routeLoading ? "Play when routes are loaded" : "Play playback"}
+          onClick={() => {
+            if (playing) {
+              setPlaying(false);
+              setPendingPlay(false);
+            } else if (routesReady) {
+              setPlaying(true);
+            } else {
+              setPendingPlay(true);
+            }
+          }}
         >
           {playing ? <Pause size={18} /> : <Play size={18} />}
         </button>
 
         <button
-          className="icon-button"
+          className="icon-button reset-button"
           type="button"
           aria-label="Reset time"
           title="Reset time"
@@ -438,7 +509,7 @@ export function App() {
               </label>
 
               <label className="color-field">
-                <span>Origin flash</span>
+                <span>Departure flash</span>
                 <input
                   type="color"
                   value={originFlashColor}
@@ -452,11 +523,11 @@ export function App() {
                   checked={showOriginFlashes}
                   onChange={(event) => setShowOriginFlashes(event.target.checked)}
                 />
-                <span>Show origin flash</span>
+                <span>Show departure flash</span>
               </label>
 
               <label className="color-field">
-                <span>Destination flash</span>
+                <span>Arrival flash</span>
                 <input
                   type="color"
                   value={destinationFlashColor}
@@ -470,7 +541,7 @@ export function App() {
                   checked={showDestinationFlashes}
                   onChange={(event) => setShowDestinationFlashes(event.target.checked)}
                 />
-                <span>Show destination flash</span>
+                <span>Show arrival flash</span>
               </label>
             </div>
           )}
@@ -482,18 +553,43 @@ export function App() {
           <Map mapStyle={MAP_STYLES[resolvedTheme]} reuseMaps />
         </DeckGL>
         <aside className="stats-panel">
-          <Metric label="Journeys so far" value={runningTotals.journeys} />
+          <Metric
+            label="Journeys so far"
+            value={runningTotals.journeys}
+            split={{
+              routed: runningTotals.routedJourneys,
+              unrouted: runningTotals.unroutedJourneys
+            }}
+          />
+          <Metric
+            label="Active"
+            value={activeTrips}
+            split={{
+              routed: activeRoutedTrips,
+              unrouted: activeUnroutedTrips
+            }}
+          />
           <Metric label="Routed km so far" value={runningTotals.routedKilometres} decimals={1} />
-          <Metric label="Active" value={activeTrips} />
-          <Metric label="Active routed" value={activeRoutedTrips} />
-          <Metric label="Active fallback" value={activeUnroutedTrips} />
-          <Metric label="Routed total" value={summary?.routedTrips ?? 0} />
+          <Metric
+            className="static-metric-start"
+            label="Total journeys"
+            value={totalTrips}
+            split={{
+              routed: totalRoutedTrips,
+              unrouted: totalUnroutedTrips
+            }}
+          />
           <Metric label="Stations" value={summary?.stationCount ?? 0} />
           <Metric label="Unmatched" value={summary?.unmatchedTrips ?? 0} />
         </aside>
-        {(loading || error) && (
+        {(loading || routeLoading || error) && (
           <div className="status-panel">
             {loading && <span>Loading {selectedDate}</span>}
+            {routeLoading && (
+              <span>
+                Loading routes {loadedRouteShardCount.toLocaleString()} / {requiredRouteShards.length.toLocaleString()}
+              </span>
+            )}
             {error && <span>{error}</span>}
           </div>
         )}
@@ -505,7 +601,8 @@ export function App() {
             }}
           >
             <strong>{hoverInfo.station.name}</strong>
-            <span>{hoverInfo.station.tripCount.toLocaleString()} journeys</span>
+            <span>{(hoverInfo.station.departureCount ?? 0).toLocaleString()} departures</span>
+            <span>{(hoverInfo.station.arrivalCount ?? 0).toLocaleString()} arrivals</span>
           </div>
         )}
       </section>
@@ -513,9 +610,24 @@ export function App() {
   );
 }
 
-function Metric({ label, value, decimals = 0 }: { label: string; value: number; decimals?: number }) {
+function Metric({
+  className,
+  label,
+  value,
+  decimals = 0,
+  split
+}: {
+  className?: string;
+  label: string;
+  value: number;
+  decimals?: number;
+  split?: {
+    routed: number;
+    unrouted: number;
+  };
+}) {
   return (
-    <div className="metric">
+    <div className={`metric ${className ?? ""}`}>
       <span>{label}</span>
       <strong>
         {value.toLocaleString(undefined, {
@@ -523,6 +635,13 @@ function Metric({ label, value, decimals = 0 }: { label: string; value: number; 
           minimumFractionDigits: decimals
         })}
       </strong>
+      {split && (
+        <div className="metric-split">
+          <span>
+            {split.routed.toLocaleString()} / {split.unrouted.toLocaleString()}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
@@ -540,28 +659,27 @@ function withAlpha(rgb: [number, number, number], alpha: number): [number, numbe
   return [rgb[0], rgb[1], rgb[2], alpha];
 }
 
-function pathDistanceMetres(path: [number, number][]): number {
-  let total = 0;
-  for (let index = 1; index < path.length; index += 1) {
-    total += distanceMetres(path[index - 1], path[index]);
+function routePathForTrip(trip: PlaybackTrip, routeCache: globalThis.Map<string, Coord[]>): Coord[] | null {
+  if (!trip.routeKey) {
+    return null;
   }
-  return total;
+  const route = routeCache.get(trip.routeKey);
+  if (!route) {
+    return null;
+  }
+  return trip.routeReversed ? [...route].reverse() : route;
 }
 
-function distanceMetres(from: [number, number], to: [number, number]): number {
-  const earthRadiusMetres = 6_371_000;
-  const fromLat = toRadians(from[1]);
-  const toLat = toRadians(to[1]);
-  const latDelta = toRadians(to[1] - from[1]);
-  const lonDelta = toRadians(to[0] - from[0]);
-  const haversine =
-    Math.sin(latDelta / 2) ** 2 + Math.cos(fromLat) * Math.cos(toLat) * Math.sin(lonDelta / 2) ** 2;
-  return earthRadiusMetres * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
+function routeShardIdsForTrips(trips: PlaybackTrip[]): string[] {
+  return [
+    ...new Set(
+      trips
+        .map((trip) => trip.routeShard)
+        .filter((shardId): shardId is string => shardId !== null)
+    )
+  ];
 }
 
-function toRadians(value: number): number {
-  return (value * Math.PI) / 180;
-}
 
 function readStoredTheme(): ThemePreference {
   const value = window.localStorage.getItem(THEME_STORAGE_KEY);

@@ -9,7 +9,13 @@ from typing import Annotated
 import typer
 
 from cyclehire.bikepoints import BikePointsConfig, run_bikepoints_pipeline
-from cyclehire.cdn import CdnExportConfig, RouteProvider, run_cdn_export
+from cyclehire.cdn import (
+    DEFAULT_ROUTE_SHARD_COMPRESSION_RATIO,
+    DEFAULT_ROUTE_SHARD_TARGET_GZIP_BYTES,
+    CdnExportConfig,
+    RouteProvider,
+    run_cdn_export,
+)
 from cyclehire.normalize import NormalizePipelineConfig, run_normalize_pipeline
 from cyclehire.raw import RawPipelineConfig, run_raw_pipeline
 from cyclehire.routes import (
@@ -278,6 +284,20 @@ def export_static(
             help="Route cache to include in exported playback data.",
         ),
     ] = RouteProvider.all,
+    route_shard_target_gzip_mb: Annotated[
+        float,
+        typer.Option(
+            "--route-shard-target-gzip-mb",
+            help="Target compressed route shard size in MB. Shards are packed using the estimated compression ratio.",
+        ),
+    ] = DEFAULT_ROUTE_SHARD_TARGET_GZIP_BYTES / 1_000_000,
+    route_shard_compression_ratio: Annotated[
+        float,
+        typer.Option(
+            "--route-shard-compression-ratio",
+            help="Estimated raw JSON to gzip compression ratio used when packing route shards.",
+        ),
+    ] = DEFAULT_ROUTE_SHARD_COMPRESSION_RATIO,
 ) -> None:
     cli_context = _cli_context(context)
     run_cdn_export(
@@ -287,6 +307,8 @@ def export_static(
             dates=tuple(date.fromisoformat(value) for value in export_date or ()),
             limit_days=limit_days,
             route_provider=route_provider,
+            route_shard_target_gzip_bytes=int(route_shard_target_gzip_mb * 1_000_000),
+            route_shard_compression_ratio=route_shard_compression_ratio,
         )
     )
 
