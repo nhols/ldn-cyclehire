@@ -27,7 +27,8 @@ const DEFAULT_UNROUTED_COLOR = "#ed074c";
 const DEFAULT_ORIGIN_FLASH_COLOR = "#52b4d2";
 const DEFAULT_DESTINATION_FLASH_COLOR = "#fabc48";
 const THEME_STORAGE_KEY = "cyclehire-theme";
-const ROUTE_SHARD_FETCH_CONCURRENCY = 6;
+const DESKTOP_ROUTE_SHARD_FETCH_CONCURRENCY = 6;
+const MOBILE_ROUTE_SHARD_FETCH_CONCURRENCY = 1;
 
 type ThemePreference = "system" | "dark" | "light";
 type ResolvedTheme = "dark" | "light";
@@ -81,6 +82,9 @@ export function App() {
   const frameRef = useRef<number | null>(null);
   const lastTickRef = useRef<number | null>(null);
   const resolvedTheme = themePreference === "system" ? systemTheme : themePreference;
+  const routeShardFetchConcurrency = isLowMemoryRouteMode()
+    ? MOBILE_ROUTE_SHARD_FETCH_CONCURRENCY
+    : DESKTOP_ROUTE_SHARD_FETCH_CONCURRENCY;
 
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -177,8 +181,8 @@ export function App() {
     let cancelled = false;
 
     async function loadRouteShards() {
-      for (let index = 0; index < routeShardIds.length; index += ROUTE_SHARD_FETCH_CONCURRENCY) {
-        const batch = routeShardIds.slice(index, index + ROUTE_SHARD_FETCH_CONCURRENCY);
+      for (let index = 0; index < routeShardIds.length; index += routeShardFetchConcurrency) {
+        const batch = routeShardIds.slice(index, index + routeShardFetchConcurrency);
         const payloads = await Promise.all(batch.map((shardId) => fetchRouteShard(shardId)));
         if (cancelled) return;
         setRouteCache((value) => {
@@ -201,7 +205,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [playback, requiredRouteShards]);
+  }, [playback, requiredRouteShards, routeShardFetchConcurrency]);
 
   const activePaths = useMemo(() => {
     if (!playback) return [];
@@ -690,6 +694,16 @@ function routeKeysForTrips(trips: PlaybackTrip[]): Set<string> {
       .map((trip) => trip.routeKey)
       .filter((routeKey): routeKey is string => routeKey !== null)
   );
+}
+
+function isLowMemoryRouteMode(): boolean {
+  const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
+  const narrowViewport = window.matchMedia("(max-width: 760px)").matches;
+  const deviceMemory =
+    "deviceMemory" in navigator
+      ? (navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 8
+      : 8;
+  return coarsePointer || narrowViewport || deviceMemory <= 4;
 }
 
 

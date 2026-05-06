@@ -9,7 +9,7 @@ import type {
 const DATA_BASE_URL = (import.meta.env.VITE_STATIC_DATA_BASE_URL ?? "/data").replace(/\/$/, "");
 
 let manifestPromise: Promise<StaticManifest> | null = null;
-const routeShardPromises = new Map<string, Promise<StaticRoutesResponse>>();
+const inFlightRouteShardPromises = new Map<string, Promise<StaticRoutesResponse>>();
 
 export async function fetchDateRange(): Promise<DateRangeResponse> {
   const manifest = await fetchManifest();
@@ -53,12 +53,14 @@ function fetchManifest(): Promise<StaticManifest> {
 
 function fetchRouteShardPath(shardId: string, path: string): Promise<StaticRoutesResponse> {
   const key = `${shardId}:${path}`;
-  const cached = routeShardPromises.get(key);
+  const cached = inFlightRouteShardPromises.get(key);
   if (cached) {
     return cached;
   }
-  const promise = fetchJson<StaticRoutesResponse>(path);
-  routeShardPromises.set(key, promise);
+  const promise = fetchJson<StaticRoutesResponse>(path).finally(() => {
+    inFlightRouteShardPromises.delete(key);
+  });
+  inFlightRouteShardPromises.set(key, promise);
   return promise;
 }
 
