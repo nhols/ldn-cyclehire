@@ -17,16 +17,29 @@ uv run cyclehire validate
 uv run cyclehire bikepoints
 ```
 
-Optional: fetch cached Google bicycle routes for smoother map playback:
+Optional: fetch cached routes so trips can render along routed paths instead of fallback arcs:
 
 ```sh
 GOOGLE_MAPS_API_KEY="..." uv run cyclehire google-routes --date 2025-06-18 --limit 10000
+MAPBOX_ACCESS_TOKEN="..." uv run cyclehire mapbox-routes --limit 100000 --rpm 275
 ```
 
-Optional: export CDN-ready static playback data:
+Export one day for local development:
 
 ```sh
-uv run cyclehire export-static --date 2025-06-18
+uv run cyclehire export-static --date 2025-06-18 --output-dir frontend/public/data --route-provider mapbox
+```
+
+Export all days for CDN upload:
+
+```sh
+make export-static-full
+```
+
+Upload compressed static data to Cloudflare R2:
+
+```sh
+make upload-static-r2
 ```
 
 Run the app
