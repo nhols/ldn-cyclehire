@@ -9,10 +9,15 @@ from typing import Annotated
 import typer
 
 from cyclehire.bikepoints import BikePointsConfig, run_bikepoints_pipeline
-from cyclehire.cdn import CdnExportConfig, run_cdn_export
+from cyclehire.cdn import CdnExportConfig, RouteProvider, run_cdn_export
 from cyclehire.normalize import NormalizePipelineConfig, run_normalize_pipeline
 from cyclehire.raw import RawPipelineConfig, run_raw_pipeline
-from cyclehire.routes import GoogleBicycleRoutesConfig, run_google_bicycle_routes
+from cyclehire.routes import (
+    GoogleBicycleRoutesConfig,
+    MapboxCyclingRoutesConfig,
+    run_google_bicycle_routes,
+    run_mapbox_cycling_routes,
+)
 from cyclehire.validate import ValidatePipelineConfig, run_validate_pipeline
 
 
@@ -192,10 +197,10 @@ def google_routes(
         bool,
         typer.Option("--dry-run", help="Print pending pairs without fetching."),
     ] = False,
-    sleep_seconds: Annotated[
-        float,
-        typer.Option("--sleep-seconds", help="Optional delay between Google Routes API requests."),
-    ] = 0.0,
+    requests_per_minute: Annotated[
+        float | None,
+        typer.Option("--rpm", help="Optional request start-rate limit per minute."),
+    ] = None,
 ) -> None:
     cli_context = _cli_context(context)
     run_google_bicycle_routes(
@@ -205,13 +210,50 @@ def google_routes(
             route_date=date.fromisoformat(route_date) if route_date else None,
             limit=limit,
             dry_run=dry_run,
-            sleep_seconds=sleep_seconds,
+            requests_per_minute=requests_per_minute,
         )
     )
 
 
 @app.command()
-def export_cdn(
+def mapbox_routes(
+    context: typer.Context,
+    route_date: Annotated[
+        str | None,
+        typer.Option(
+            "--date",
+            metavar="YYYY-MM-DD",
+            help="Optional trip date for ranking route candidates. Omit to rank all dates.",
+        ),
+    ] = None,
+    limit: Annotated[
+        int,
+        typer.Option("--limit", help="Maximum candidate pairs to fetch."),
+    ] = 100_000,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Print pending pairs without fetching."),
+    ] = False,
+    requests_per_minute: Annotated[
+        float,
+        typer.Option("--rpm", help="Maximum request starts per minute."),
+    ] = 275,
+) -> None:
+    cli_context = _cli_context(context)
+    run_mapbox_cycling_routes(
+        MapboxCyclingRoutesConfig(
+            data_dir=cli_context.data_dir,
+            access_token=os.environ.get("MAPBOX_ACCESS_TOKEN"),
+            route_date=date.fromisoformat(route_date) if route_date else None,
+            limit=limit,
+            dry_run=dry_run,
+            requests_per_minute=requests_per_minute,
+        )
+    )
+
+
+@app.command()
+def export_static(
     context: typer.Context,
     export_date: Annotated[
         list[str] | None,
@@ -229,6 +271,13 @@ def export_cdn(
         int | None,
         typer.Option("--limit-days", help="Maximum number of days to export, useful for smoke tests."),
     ] = None,
+    route_provider: Annotated[
+        RouteProvider,
+        typer.Option(
+            "--route-provider",
+            help="Route cache to include in exported playback data.",
+        ),
+    ] = RouteProvider.all,
 ) -> None:
     cli_context = _cli_context(context)
     run_cdn_export(
@@ -237,6 +286,7 @@ def export_cdn(
             output_dir=output_dir,
             dates=tuple(date.fromisoformat(value) for value in export_date or ()),
             limit_days=limit_days,
+            route_provider=route_provider,
         )
     )
 

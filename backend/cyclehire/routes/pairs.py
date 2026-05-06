@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from datetime import date, datetime, time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import polars as pl
 
@@ -29,7 +29,7 @@ def ranked_route_pairs(data_dir: Path, route_date: date | None = None) -> pl.Dat
             end_at = datetime.combine(route_date, time.max)
             frame = frame.filter((pl.col("start_at") >= start_at) & (pl.col("start_at") <= end_at))
 
-        trips = frame.collect()
+        trips = cast(pl.DataFrame, frame.collect())
         if trips.is_empty():
             continue
 

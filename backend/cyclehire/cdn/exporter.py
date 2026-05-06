@@ -9,7 +9,7 @@ from typing import Any, cast
 
 import polars as pl
 
-from cyclehire.cdn.config import CdnExportConfig
+from cyclehire.cdn.config import CdnExportConfig, RouteProvider
 from cyclehire.cdn.paths import (
     bikepoints_path,
     compressed_bikepoints_path,
@@ -24,23 +24,26 @@ from cyclehire.dashboard.models import MatchedTripRow
 from cyclehire.dashboard.playback import (
     PlaybackDataStore,
     activity_payload,
+    load_route_lookup,
     route_key_for_trip,
     seconds_since_midnight,
     station_payload,
 )
+from cyclehire.routes.paths import google_bicycle_routes_parquet_path, mapbox_cycling_routes_parquet_path
 
 logger = logging.getLogger(__name__)
 
 
 def run_cdn_export(config: CdnExportConfig) -> None:
     store = PlaybackDataStore(config.data_dir)
+    route_lookup = route_lookup_for_provider(config)
     output_dir = config.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
     selected_days = select_export_days(store, config.dates, config.limit_days)
     logger.info("Exporting %s playback day(s) to %s", len(selected_days), output_dir)
 
-    routes_payload = route_payload(store)
+    routes_payload = route_payload(route_lookup)
     routes_file = write_json(output_dir / routes_path(), routes_payload)
     compressed_routes_file = write_json_gzip(output_dir / compressed_routes_path(), routes_payload)
 
@@ -50,7 +53,7 @@ def run_cdn_export(config: CdnExportConfig) -> None:
 
     day_files = []
     for playback_date in selected_days:
-        payload = day_payload(store, playback_date)
+        payload = day_payload(store, playback_date, route_lookup)
         written = write_json(output_dir / day_path(playback_date.isoformat()), payload)
         compressed_written = write_json_gzip(output_dir / compressed_day_path(playback_date.isoformat()), payload)
         day_files.append(
@@ -81,7 +84,7 @@ def run_cdn_export(config: CdnExportConfig) -> None:
                 "gzipPath": str(compressed_routes_path()),
                 "bytes": routes_file.stat().st_size,
                 "gzipBytes": compressed_routes_file.stat().st_size,
-                "routeCount": len(store.route_lookup),
+                "routeCount": len(route_lookup),
             },
             "bikepoints": {
                 "path": str(bikepoints_path()),
@@ -121,9 +124,13 @@ def select_export_days(
     return selected
 
 
-def day_payload(store: PlaybackDataStore, playback_date: date) -> dict[str, Any]:
+def day_payload(
+    store: PlaybackDataStore,
+    playback_date: date,
+    route_lookup: dict[tuple[str, str], list[list[float]]],
+) -> dict[str, Any]:
     frames = store.playback_frames(playback_date)
-    trips = compact_trip_payload(frames.matched, store.route_lookup)
+    trips = compact_trip_payload(frames.matched, route_lookup)
     return {
         "date": playback_date.isoformat(),
         "stations": station_payload(frames.station_matches),
@@ -170,16 +177,27 @@ def compact_trip_payload(trips: pl.DataFrame, route_lookup: dict[tuple[str, str]
     return payload
 
 
-def route_payload(store: PlaybackDataStore) -> dict[str, Any]:
+def route_payload(route_lookup: dict[tuple[str, str], list[list[float]]]) -> dict[str, Any]:
     routes = {
         f"{pair_from}|{pair_to}": coordinates
-        for (pair_from, pair_to), coordinates in sorted(store.route_lookup.items())
+        for (pair_from, pair_to), coordinates in sorted(route_lookup.items())
     }
     return {
         "version": 1,
         "encoding": "geojson-coordinate-array",
         "routes": routes,
     }
+
+
+def route_lookup_for_provider(config: CdnExportConfig) -> dict[tuple[str, str], list[list[float]]]:
+    if config.route_provider == RouteProvider.google:
+        return load_route_lookup(config.data_dir / google_bicycle_routes_parquet_path())
+    if config.route_provider == RouteProvider.mapbox:
+        return load_route_lookup(config.data_dir / mapbox_cycling_routes_parquet_path())
+
+    lookup = load_route_lookup(config.data_dir / google_bicycle_routes_parquet_path())
+    lookup.update(load_route_lookup(config.data_dir / mapbox_cycling_routes_parquet_path()))
+    return lookup
 
 
 def bikepoint_payload(store: PlaybackDataStore) -> dict[str, Any]:

@@ -20,3 +20,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["backend/cyclehire"]
+
+[dependency-groups]
+dev = [
+    "ty>=0.0.34",
+]

@@ -26,7 +26,7 @@ GOOGLE_MAPS_API_KEY="..." uv run cyclehire google-routes --date 2025-06-18 --lim
 Optional: export CDN-ready static playback data:
 
 ```sh
-uv run cyclehire export-cdn --date 2025-06-18
+uv run cyclehire export-static --date 2025-06-18
 ```
 
 Run the app

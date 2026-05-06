@@ -6,7 +6,7 @@ import tempfile
 import urllib.request
 from datetime import date, datetime, time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import polars as pl
 
@@ -181,13 +181,16 @@ def stations_for_day(trip_files: list[Path], sample_date: date) -> pl.DataFrame:
         pl.col("end_station_id").alias("station_id"),
         pl.col("end_station_name").alias("station_name"),
     )
-    return (
-        pl.concat([starts, ends])
-        .filter(pl.col("station_name").is_not_null())
-        .group_by("station_id", "station_name")
-        .agg(pl.len().alias("trip_count"))
-        .sort("trip_count", descending=True)
-        .collect()
+    return cast(
+        pl.DataFrame,
+        (
+            pl.concat([starts, ends])
+            .filter(pl.col("station_name").is_not_null())
+            .group_by("station_id", "station_name")
+            .agg(pl.len().alias("trip_count"))
+            .sort("trip_count", descending=True)
+            .collect()
+        ),
     )
 
 

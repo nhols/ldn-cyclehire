@@ -10,4 +10,14 @@ class GoogleBicycleRoutesConfig:
     route_date: date | None = None
     limit: int = 10_000
     dry_run: bool = False
-    sleep_seconds: float = 0.0
+    requests_per_minute: float | None = None
+
+
+@dataclass(frozen=True)
+class MapboxCyclingRoutesConfig:
+    data_dir: Path
+    access_token: str | None
+    route_date: date | None = None
+    limit: int = 100_000
+    dry_run: bool = False
+    requests_per_minute: float | None = 275

@@ -24,6 +24,8 @@ const SPEEDS = [1, 10, 60, 180, 600, 1200, 2400];
 const ARRIVAL_FLASH_SECONDS = 90;
 const DEFAULT_ROUTED_COLOR = "#467cfb";
 const DEFAULT_UNROUTED_COLOR = "#ed074c";
+const DEFAULT_ORIGIN_FLASH_COLOR = "#52b4d2";
+const DEFAULT_DESTINATION_FLASH_COLOR = "#fabc48";
 const THEME_STORAGE_KEY = "cyclehire-theme";
 
 type ThemePreference = "system" | "dark" | "light";
@@ -36,10 +38,11 @@ type ActivePath = {
   routed: boolean;
 };
 
-type ArrivalFlash = {
+type StationFlash = {
   id: string;
   coord: [number, number];
   age: number;
+  kind: "origin" | "destination";
 };
 
 type HoverInfo = {
@@ -59,8 +62,12 @@ export function App() {
   const [speed, setSpeed] = useState(180);
   const [tailLength, setTailLength] = useState(18);
   const [showUnrouted, setShowUnrouted] = useState(true);
+  const [showOriginFlashes, setShowOriginFlashes] = useState(true);
+  const [showDestinationFlashes, setShowDestinationFlashes] = useState(true);
   const [routedColor, setRoutedColor] = useState(DEFAULT_ROUTED_COLOR);
   const [unroutedColor, setUnroutedColor] = useState(DEFAULT_UNROUTED_COLOR);
+  const [originFlashColor, setOriginFlashColor] = useState(DEFAULT_ORIGIN_FLASH_COLOR);
+  const [destinationFlashColor, setDestinationFlashColor] = useState(DEFAULT_DESTINATION_FLASH_COLOR);
   const [traceMenuOpen, setTraceMenuOpen] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -158,18 +165,66 @@ export function App() {
       });
   }, [playback, currentTime, tailLength, showUnrouted]);
 
-  const arrivalFlashes = useMemo(() => {
+  const routedDistances = useMemo(() => {
+    const distances = new globalThis.Map<string, number>();
+    if (!playback) return distances;
+    for (const trip of playback.trips) {
+      if (trip.path) {
+        distances.set(trip.id, pathDistanceMetres(trip.path));
+      }
+    }
+    return distances;
+  }, [playback]);
+
+  const stationFlashes = useMemo(() => {
     if (!playback) return [];
-    return playback.trips
-      .filter((trip) => trip.end <= currentTime && trip.end >= currentTime - ARRIVAL_FLASH_SECONDS)
-      .map(
-        (trip): ArrivalFlash => ({
-          id: trip.id,
+    const flashes: StationFlash[] = [];
+    for (const trip of playback.trips) {
+      if (showOriginFlashes && trip.start <= currentTime && trip.start >= currentTime - ARRIVAL_FLASH_SECONDS) {
+        flashes.push({
+          id: `${trip.id}-origin`,
+          coord: trip.fromCoord,
+          age: currentTime - trip.start,
+          kind: "origin"
+        });
+      }
+
+      if (showDestinationFlashes && trip.end <= currentTime && trip.end >= currentTime - ARRIVAL_FLASH_SECONDS) {
+        flashes.push({
+          id: `${trip.id}-destination`,
           coord: trip.toCoord,
-          age: currentTime - trip.end
-        })
-      );
-  }, [playback, currentTime]);
+          age: currentTime - trip.end,
+          kind: "destination"
+        });
+      }
+    }
+    return flashes;
+  }, [playback, currentTime, showOriginFlashes, showDestinationFlashes]);
+
+  const runningTotals = useMemo(() => {
+    if (!playback) {
+      return { journeys: 0, routedKilometres: 0 };
+    }
+
+    let journeys = 0;
+    let routedMetres = 0;
+    for (const trip of playback.trips) {
+      if (trip.start <= currentTime) {
+        journeys += 1;
+      }
+
+      const routeDistance = routedDistances.get(trip.id);
+      if (routeDistance !== undefined && trip.start <= currentTime) {
+        const progress = Math.min(1, Math.max(0, (currentTime - trip.start) / Math.max(1, trip.end - trip.start)));
+        routedMetres += routeDistance * progress;
+      }
+    }
+
+    return {
+      journeys,
+      routedKilometres: routedMetres / 1000
+    };
+  }, [playback, currentTime, routedDistances]);
 
   const layers = useMemo(
     () => [
@@ -209,20 +264,28 @@ export function App() {
         jointRounded: true,
         capRounded: true
       }),
-      new ScatterplotLayer<ArrivalFlash>({
-        id: "arrival-flashes",
-        data: arrivalFlashes,
+      new ScatterplotLayer<StationFlash>({
+        id: "station-flashes",
+        data: stationFlashes,
         getPosition: (item) => item.coord,
         getRadius: (item) => 34 + (item.age / ARRIVAL_FLASH_SECONDS) * 130,
-        getFillColor: (item) => [250, 188, 72, Math.max(0, 90 - item.age)],
-        getLineColor: (item) => [255, 238, 184, Math.max(0, 220 - item.age * 2)],
+        getFillColor: (item) =>
+          withAlpha(
+            hexToRgb(item.kind === "origin" ? originFlashColor : destinationFlashColor),
+            Math.max(0, 90 - item.age)
+          ),
+        getLineColor: (item) =>
+          withAlpha(
+            hexToRgb(item.kind === "origin" ? originFlashColor : destinationFlashColor),
+            Math.max(0, 220 - item.age * 2)
+          ),
         lineWidthMinPixels: 2,
         radiusUnits: "meters",
         stroked: true,
         filled: true
       })
     ],
-    [activePaths, arrivalFlashes, playback, routedColor, unroutedColor]
+    [activePaths, stationFlashes, playback, routedColor, unroutedColor, originFlashColor, destinationFlashColor]
   );
 
   const activeTrips = activePaths.length;
@@ -373,6 +436,42 @@ export function App() {
                 />
                 <span>Show unrouted</span>
               </label>
+
+              <label className="color-field">
+                <span>Origin flash</span>
+                <input
+                  type="color"
+                  value={originFlashColor}
+                  onChange={(event) => setOriginFlashColor(event.target.value)}
+                />
+              </label>
+
+              <label className="checkbox-field">
+                <input
+                  type="checkbox"
+                  checked={showOriginFlashes}
+                  onChange={(event) => setShowOriginFlashes(event.target.checked)}
+                />
+                <span>Show origin flash</span>
+              </label>
+
+              <label className="color-field">
+                <span>Destination flash</span>
+                <input
+                  type="color"
+                  value={destinationFlashColor}
+                  onChange={(event) => setDestinationFlashColor(event.target.value)}
+                />
+              </label>
+
+              <label className="checkbox-field">
+                <input
+                  type="checkbox"
+                  checked={showDestinationFlashes}
+                  onChange={(event) => setShowDestinationFlashes(event.target.checked)}
+                />
+                <span>Show destination flash</span>
+              </label>
             </div>
           )}
         </div>
@@ -383,7 +482,8 @@ export function App() {
           <Map mapStyle={MAP_STYLES[resolvedTheme]} reuseMaps />
         </DeckGL>
         <aside className="stats-panel">
-          <Metric label="Journeys" value={summary?.matchedTrips ?? 0} />
+          <Metric label="Journeys so far" value={runningTotals.journeys} />
+          <Metric label="Routed km so far" value={runningTotals.routedKilometres} decimals={1} />
           <Metric label="Active" value={activeTrips} />
           <Metric label="Active routed" value={activeRoutedTrips} />
           <Metric label="Active fallback" value={activeUnroutedTrips} />
@@ -413,11 +513,16 @@ export function App() {
   );
 }
 
-function Metric({ label, value }: { label: string; value: number }) {
+function Metric({ label, value, decimals = 0 }: { label: string; value: number; decimals?: number }) {
   return (
     <div className="metric">
       <span>{label}</span>
-      <strong>{value.toLocaleString()}</strong>
+      <strong>
+        {value.toLocaleString(undefined, {
+          maximumFractionDigits: decimals,
+          minimumFractionDigits: decimals
+        })}
+      </strong>
     </div>
   );
 }
@@ -433,6 +538,29 @@ function hexToRgb(hex: string): [number, number, number] {
 
 function withAlpha(rgb: [number, number, number], alpha: number): [number, number, number, number] {
   return [rgb[0], rgb[1], rgb[2], alpha];
+}
+
+function pathDistanceMetres(path: [number, number][]): number {
+  let total = 0;
+  for (let index = 1; index < path.length; index += 1) {
+    total += distanceMetres(path[index - 1], path[index]);
+  }
+  return total;
+}
+
+function distanceMetres(from: [number, number], to: [number, number]): number {
+  const earthRadiusMetres = 6_371_000;
+  const fromLat = toRadians(from[1]);
+  const toLat = toRadians(to[1]);
+  const latDelta = toRadians(to[1] - from[1]);
+  const lonDelta = toRadians(to[0] - from[0]);
+  const haversine =
+    Math.sin(latDelta / 2) ** 2 + Math.cos(fromLat) * Math.cos(toLat) * Math.sin(lonDelta / 2) ** 2;
+  return earthRadiusMetres * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
+}
+
+function toRadians(value: number): number {
+  return (value * Math.PI) / 180;
 }
 
 function readStoredTheme(): ThemePreference {

@@ -25,7 +25,7 @@ from cyclehire.dashboard.models import (
     StationSourceRow,
     TripPayload,
 )
-from cyclehire.routes.paths import google_bicycle_routes_parquet_path
+from cyclehire.routes.paths import google_bicycle_routes_parquet_path, mapbox_cycling_routes_parquet_path
 from cyclehire.stations import BikePointLookup, make_station_key, station_key, string_or_none
 
 
@@ -53,22 +53,9 @@ class PlaybackDataStore:
 
     @cached_property
     def route_lookup(self) -> RouteLookup:
-        path = self.data_dir / google_bicycle_routes_parquet_path()
-        if not path.exists():
-            return {}
-
-        routes = pl.read_parquet(path).filter(
-            (pl.col("error").is_null() | (pl.col("error") == "null"))
-            & pl.col("geometry").is_not_null()
-            & (pl.col("geometry") != "null")
-        )
         lookup: RouteLookup = {}
-        for raw_row in routes.iter_rows(named=True):
-            row = cast(RouteCacheRow, raw_row)
-            geometry = cast(RouteGeometry, json.loads(row["geometry"]))
-            coordinates = geometry.get("coordinates")
-            if coordinates:
-                lookup[(row["pair_from"], row["pair_to"])] = coordinates
+        lookup.update(load_route_lookup(self.data_dir / google_bicycle_routes_parquet_path()))
+        lookup.update(load_route_lookup(self.data_dir / mapbox_cycling_routes_parquet_path()))
         return lookup
 
     def date_range(self) -> DateRangePayload:
@@ -231,6 +218,25 @@ class PlaybackDataStore:
                 }
             )
         return pl.DataFrame(rows)
+
+
+def load_route_lookup(path: Path) -> RouteLookup:
+    if not path.exists():
+        return {}
+
+    routes = pl.read_parquet(path).filter(
+        (pl.col("error").is_null() | (pl.col("error") == "null"))
+        & pl.col("geometry").is_not_null()
+        & (pl.col("geometry") != "null")
+    )
+    lookup: RouteLookup = {}
+    for raw_row in routes.iter_rows(named=True):
+        row = cast(RouteCacheRow, raw_row)
+        geometry = cast(RouteGeometry, json.loads(row["geometry"]))
+        coordinates = geometry.get("coordinates")
+        if coordinates:
+            lookup[(row["pair_from"], row["pair_to"])] = coordinates
+    return lookup
 
 
 @dataclass(frozen=True)

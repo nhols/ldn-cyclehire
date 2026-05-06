@@ -1,69 +1,32 @@
 from __future__ import annotations
 
 import json
-import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, cast
 
 import polars as pl
 
+from cyclehire.routes.common import JsonlRouteCache, fetch_routes, serializable_route_row
 from cyclehire.routes.paths import (
     google_bicycle_routes_jsonl_path,
     google_bicycle_routes_parquet_path,
 )
-from cyclehire.utils import write_parquet_atomic
 
 
 ROUTES_URL = "https://routes.googleapis.com/directions/v2:computeRoutes"
 FIELD_MASK = "routes.distanceMeters,routes.duration,routes.staticDuration,routes.polyline"
 
 
-@dataclass(frozen=True)
-class GoogleBicycleRouteCache:
-    data_dir: Path
-
-    @property
-    def jsonl_path(self) -> Path:
-        return self.data_dir / google_bicycle_routes_jsonl_path()
-
-    @property
-    def parquet_path(self) -> Path:
-        return self.data_dir / google_bicycle_routes_parquet_path()
-
-    def fetched_keys(self) -> set[str]:
-        if not self.jsonl_path.exists():
-            return set()
-        keys = set()
-        with self.jsonl_path.open("r", encoding="utf-8") as input_file:
-            for line in input_file:
-                if not line.strip():
-                    continue
-                row = json.loads(line)
-                keys.add(route_key(row["pair_from"], row["pair_to"]))
-        return keys
-
-    def append_routes(self, routes: Iterable[dict[str, Any]]) -> None:
-        self.jsonl_path.parent.mkdir(parents=True, exist_ok=True)
-        with self.jsonl_path.open("a", encoding="utf-8") as output:
-            for route in routes:
-                output.write(json.dumps(route, sort_keys=True) + "\n")
-                output.flush()
-
-    def write_parquet(self) -> None:
-        if not self.jsonl_path.exists():
-            return
-        rows = []
-        with self.jsonl_path.open("r", encoding="utf-8") as input_file:
-            for line in input_file:
-                if line.strip():
-                    rows.append(json.loads(line))
-        if not rows:
-            return
-        frame = pl.DataFrame([serializable_route_row(row) for row in rows], infer_schema_length=None)
-        write_parquet_atomic(frame, self.parquet_path)
+class GoogleBicycleRouteCache(JsonlRouteCache):
+    def __init__(self, data_dir: Path) -> None:
+        super().__init__(
+            data_dir,
+            jsonl_path=google_bicycle_routes_jsonl_path(),
+            parquet_path=google_bicycle_routes_parquet_path(),
+            serialize_row=serializable_route_row,
+        )
 
 
 def fetch_google_bicycle_routes(
@@ -71,19 +34,14 @@ def fetch_google_bicycle_routes(
     *,
     api_key: str,
     cache: GoogleBicycleRouteCache,
-    sleep_seconds: float = 0.0,
+    requests_per_minute: float | None = None,
 ) -> int:
-    fetched = 0
-    for pair in pairs.iter_rows(named=True):
-        route = fetch_route(pair, api_key)
-        cache.append_routes([route])
-        fetched += 1
-        if fetched % 25 == 0:
-            print(f"fetched {fetched:,}/{pairs.height:,}", flush=True)
-        if sleep_seconds:
-            time.sleep(sleep_seconds)
-    cache.write_parquet()
-    return fetched
+    return fetch_routes(
+        pairs,
+        fetch_route=lambda pair: fetch_route(pair, api_key),
+        cache=cache,
+        requests_per_minute=requests_per_minute,
+    )
 
 
 def fetch_route(pair: dict[str, Any], api_key: str) -> dict[str, Any]:
@@ -122,13 +80,14 @@ def fetch_route(pair: dict[str, Any], api_key: str) -> dict[str, Any]:
     )
     try:
         with urllib.request.urlopen(request, timeout=60) as response:
-            payload = json.load(response)
+            payload = cast(dict[str, Any], json.load(response))
     except urllib.error.HTTPError as exc:
         error_body = exc.read().decode("utf-8", errors="replace")
         payload = {"error": {"status": exc.status, "body": error_body}}
 
-    route = (payload.get("routes") or [{}])[0]
-    polyline = route.get("polyline") or {}
+    routes = cast(list[dict[str, Any]], payload.get("routes") or [{}])
+    route = routes[0]
+    polyline = cast(dict[str, Any], route.get("polyline") or {})
     return {
         "pair_from": pair["pair_from"],
         "pair_to": pair["pair_to"],
@@ -142,18 +101,4 @@ def fetch_route(pair: dict[str, Any], api_key: str) -> dict[str, Any]:
         "static_duration": route.get("staticDuration"),
         "geometry": polyline.get("geoJsonLinestring"),
         "error": payload.get("error"),
-    }
-
-
-def route_key(pair_from: str, pair_to: str) -> str:
-    return f"{pair_from}:{pair_to}"
-
-
-def serializable_route_row(row: dict[str, Any]) -> dict[str, Any]:
-    return {
-        **row,
-        "from_coord": json.dumps(row["from_coord"]),
-        "to_coord": json.dumps(row["to_coord"]),
-        "geometry": json.dumps(row["geometry"]),
-        "error": json.dumps(row["error"]),
     }
