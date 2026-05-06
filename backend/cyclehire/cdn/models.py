@@ -55,6 +55,7 @@ class DayFileEntry(TypedDict):
     date: str
     path: str
     gzipPath: str
+    hash: str
     trips: int
     routedTrips: int
     bytes: int
@@ -71,6 +72,7 @@ class RouteShardFileEntry(TypedDict):
     id: str
     path: str
     gzipPath: str
+    hash: str
     routeCount: int
     bytes: int
     gzipBytes: int
@@ -112,6 +114,7 @@ class BikepointsPayload(TypedDict):
 class BikepointsManifestEntry(TypedDict):
     path: str
     gzipPath: str
+    hash: str
     bytes: int
     gzipBytes: int
     stationCount: int

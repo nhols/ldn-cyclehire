@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 import gzip
+import hashlib
 import json
 import logging
 from pathlib import Path
@@ -26,10 +27,7 @@ from cyclehire.cdn.models import (
 )
 from cyclehire.cdn.paths import (
     bikepoints_path,
-    compressed_bikepoints_path,
-    compressed_day_path,
     compressed_manifest_path,
-    compressed_route_shard_path,
     day_path,
     manifest_path,
     route_shard_path,
@@ -66,6 +64,15 @@ class RouteShard:
     raw_bytes: int
 
 
+@dataclass(frozen=True)
+class WrittenJson:
+    path: Path
+    gzip_path: Path
+    digest: str
+    bytes: int
+    gzip_bytes: int
+
+
 def run_cdn_export(config: CdnExportConfig) -> None:
     store = PlaybackDataStore(config.data_dir)
     route_records = route_records_for_provider(config)
@@ -89,23 +96,22 @@ def run_cdn_export(config: CdnExportConfig) -> None:
     }
 
     bikepoints_payload = bikepoint_payload(store)
-    bikepoints_file = write_json(output_dir / bikepoints_path(), bikepoints_payload)
-    compressed_bikepoints_file = write_json_gzip(output_dir / compressed_bikepoints_path(), bikepoints_payload)
+    bikepoints_file = write_hashed_json(output_dir, bikepoints_path(), bikepoints_payload)
 
     day_files: list[DayFileEntry] = []
     for playback_date in selected_days:
         payload = day_payload(store, playback_date, route_lookup, route_shard_index)
-        written = write_json(output_dir / day_path(playback_date.isoformat()), payload)
-        compressed_written = write_json_gzip(output_dir / compressed_day_path(playback_date.isoformat()), payload)
+        written = write_hashed_json(output_dir, day_path(playback_date.isoformat()), payload)
         day_files.append(
             {
                 "date": playback_date.isoformat(),
-                "path": str(day_path(playback_date.isoformat())),
-                "gzipPath": str(compressed_day_path(playback_date.isoformat())),
+                "path": str(written.path.relative_to(output_dir)),
+                "gzipPath": str(written.gzip_path.relative_to(output_dir)),
+                "hash": written.digest,
                 "trips": payload["summary"]["matchedTrips"],
                 "routedTrips": payload["summary"]["routedTrips"],
-                "bytes": written.stat().st_size,
-                "gzipBytes": compressed_written.stat().st_size,
+                "bytes": written.bytes,
+                "gzipBytes": written.gzip_bytes,
             }
         )
         logger.info(
@@ -138,10 +144,11 @@ def run_cdn_export(config: CdnExportConfig) -> None:
                 "shards": shard_files,
             },
             "bikepoints": {
-                "path": str(bikepoints_path()),
-                "gzipPath": str(compressed_bikepoints_path()),
-                "bytes": bikepoints_file.stat().st_size,
-                "gzipBytes": compressed_bikepoints_file.stat().st_size,
+                "path": str(bikepoints_file.path.relative_to(output_dir)),
+                "gzipPath": str(bikepoints_file.gzip_path.relative_to(output_dir)),
+                "hash": bikepoints_file.digest,
+                "bytes": bikepoints_file.bytes,
+                "gzipBytes": bikepoints_file.gzip_bytes,
                 "stationCount": store.bikepoints.height,
             },
         },
@@ -312,25 +319,25 @@ def write_route_shards(output_dir: Path, provider: str, route_shards: list[Route
     total_shards = len(route_shards)
     for shard in route_shards:
         payload = route_payload(shard.routes)
-        written = write_json(output_dir / route_shard_path(provider, shard.shard_id), payload)
-        compressed_written = write_json_gzip(output_dir / compressed_route_shard_path(provider, shard.shard_id), payload)
+        written = write_hashed_json(output_dir, route_shard_path(provider, shard.shard_id), payload)
         logger.info(
             "Exported route shard %s/%s %s with %s routes, %.1f MB raw, %.1f MB gzip",
             len(shard_files) + 1,
             total_shards,
             shard.shard_id,
             len(shard.routes),
-            written.stat().st_size / 1_000_000,
-            compressed_written.stat().st_size / 1_000_000,
+            written.bytes / 1_000_000,
+            written.gzip_bytes / 1_000_000,
         )
         shard_files.append(
             {
                 "id": shard.shard_id,
-                "path": str(route_shard_path(provider, shard.shard_id)),
-                "gzipPath": str(compressed_route_shard_path(provider, shard.shard_id)),
+                "path": str(written.path.relative_to(output_dir)),
+                "gzipPath": str(written.gzip_path.relative_to(output_dir)),
+                "hash": written.digest,
                 "routeCount": len(shard.routes),
-                "bytes": written.stat().st_size,
-                "gzipBytes": compressed_written.stat().st_size,
+                "bytes": written.bytes,
+                "gzipBytes": written.gzip_bytes,
             }
         )
 
@@ -402,15 +409,39 @@ def bikepoint_payload(store: PlaybackDataStore) -> BikepointsPayload:
     }
 
 
+def write_hashed_json(output_dir: Path, relative_path: Path, payload: JsonPayload) -> WrittenJson:
+    content = json_content(payload)
+    digest = hashlib.sha256(content).hexdigest()[:12]
+    path = output_dir / path_with_hash(relative_path, digest)
+    gzip_path = path.with_name(f"{path.name}.gz")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+    gzip_content = gzip.compress(content, compresslevel=9, mtime=0)
+    gzip_path.write_bytes(gzip_content)
+    return WrittenJson(
+        path=path,
+        gzip_path=gzip_path,
+        digest=digest,
+        bytes=len(content),
+        gzip_bytes=len(gzip_content),
+    )
+
+
+def path_with_hash(path: Path, digest: str) -> Path:
+    return path.with_name(f"{path.stem}.{digest}{path.suffix}")
+
+
 def write_json(path: Path, payload: JsonPayload) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, separators=(",", ":"), default=str), encoding="utf-8")
+    path.write_bytes(json_content(payload))
     return path
 
 
 def write_json_gzip(path: Path, payload: JsonPayload) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    content = json.dumps(payload, separators=(",", ":"), default=str).encode("utf-8")
-    with gzip.open(path, "wb", compresslevel=9) as file:
-        file.write(content)
+    path.write_bytes(gzip.compress(json_content(payload), compresslevel=9, mtime=0))
     return path
+
+
+def json_content(payload: JsonPayload) -> bytes:
+    return json.dumps(payload, separators=(",", ":"), default=str).encode("utf-8")
