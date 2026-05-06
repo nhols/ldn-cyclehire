@@ -1,8 +1,10 @@
 R2_BUCKET ?= ldn-cyclehire-data
+R2_ACCOUNT_ID ?=
+R2_UPLOAD_DIR ?= /tmp/cyclehire-r2-upload
 CDN_DIR ?= data/cdn
 ROUTE_PROVIDER ?= mapbox
 
-.PHONY: install dev export-static export-static-full upload-static-r2 frontend
+.PHONY: install dev export-static export-static-full prepare-r2-upload upload-static-r2 upload-static-r2-bulk upload-static-r2-wrangler frontend
 
 install:
 	uv sync
@@ -16,7 +18,15 @@ export-static:
 export-static-full:
 	uv run cyclehire export-static --output-dir $(CDN_DIR) --route-provider $(ROUTE_PROVIDER)
 
-upload-static-r2:
+prepare-r2-upload:
+	CDN_DIR=$(CDN_DIR) R2_UPLOAD_DIR=$(R2_UPLOAD_DIR) bash scripts/prepare-r2-upload-dir.sh
+
+upload-static-r2: upload-static-r2-bulk
+
+upload-static-r2-bulk: prepare-r2-upload
+	R2_UPLOAD_DIR=$(R2_UPLOAD_DIR) R2_BUCKET=$(R2_BUCKET) R2_ACCOUNT_ID=$(R2_ACCOUNT_ID) bash scripts/upload-static-r2-bulk.sh
+
+upload-static-r2-wrangler:
 	CDN_DIR=$(CDN_DIR) R2_BUCKET=$(R2_BUCKET) bash scripts/upload-static-r2.sh
 
 frontend:

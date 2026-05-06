@@ -42,6 +42,12 @@ Upload compressed static data to Cloudflare R2:
 make upload-static-r2
 ```
 
+This prepares a temporary upload directory from the compressed export and uploads
+it through R2's S3-compatible API. The older Wrangler uploader is available as
+`make upload-static-r2-wrangler`, but it is much slower for full exports.
+The bulk uploader reads R2 credentials from `.env`: `R2_ACCESS_KEY_ID`,
+`R2_SECRET_ACCESS_KEY`, and `R2_ACCOUNT_ID`.
+
 Run the app
 -----------
 
