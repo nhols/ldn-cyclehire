@@ -2,11 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import DeckGL from "@deck.gl/react";
 import { PathLayer, ScatterplotLayer } from "@deck.gl/layers";
 import { Map } from "react-map-gl/maplibre";
-import { Monitor, Moon, Settings2, Pause, Play, RotateCcw, Sun } from "lucide-react";
+import { CalendarDays, Filter, Github, Monitor, Moon, Settings2, Pause, Play, RotateCcw, Sun, X } from "lucide-react";
 import { ActivityScrubber } from "./ActivityScrubber";
-import { fetchDateRange, fetchPlayback, fetchRouteShard } from "./api";
+import { DateHistogram } from "./DateHistogram";
+import { fetchDateRange, fetchDaySummaries, fetchPlayback, fetchRouteShard } from "./api";
 import { curvedPath, formatClock, slicePathWindow } from "./paths";
-import type { Coord, PlaybackResponse, PlaybackStation, PlaybackTrip } from "./types";
+import type { Coord, DaySummary, PlaybackResponse, PlaybackStation, PlaybackTrip } from "./types";
 
 const LONDON_VIEW = {
   longitude: -0.11,
@@ -30,6 +31,10 @@ const DEFAULT_ROUTED_COLOR = "#467cfb";
 const DEFAULT_UNROUTED_COLOR = "#ed074c";
 const DEFAULT_ORIGIN_FLASH_COLOR = "#52b4d2";
 const DEFAULT_DESTINATION_FLASH_COLOR = "#fabc48";
+const SELECTED_STATION_FILL: [number, number, number, number] = [237, 7, 76, 215];
+const SELECTED_STATION_LINE: [number, number, number, number] = [255, 214, 226, 245];
+const DEFAULT_STATION_FILL: [number, number, number, number] = [32, 130, 120, 150];
+const DEFAULT_STATION_LINE: [number, number, number, number] = [234, 241, 237, 220];
 const THEME_STORAGE_KEY = "cyclehire-theme";
 const DESKTOP_ROUTE_SHARD_FETCH_CONCURRENCY = 6;
 const MOBILE_ROUTE_SHARD_FETCH_CONCURRENCY = 1;
@@ -75,6 +80,7 @@ export function App() {
   const [selectedDate, setSelectedDate] = useState("2025-06-18");
   const [minDate, setMinDate] = useState("");
   const [maxDate, setMaxDate] = useState("");
+  const [daySummaries, setDaySummaries] = useState<DaySummary[]>([]);
   const [playback, setPlayback] = useState<PlaybackResponse | null>(null);
   const [routeCache, setRouteCache] = useState<globalThis.Map<string, Coord[]>>(() => new globalThis.Map());
   const [requiredRouteShards, setRequiredRouteShards] = useState<string[]>([]);
@@ -82,14 +88,17 @@ export function App() {
   const [currentTime, setCurrentTime] = useState(7 * 3600);
   const [speed, setSpeed] = useState(180);
   const [tailLength, setTailLength] = useState(18);
-  const [showUnrouted, setShowUnrouted] = useState(true);
+  const [showUnrouted, setShowUnrouted] = useState(false);
   const [showOriginFlashes, setShowOriginFlashes] = useState(true);
   const [showDestinationFlashes, setShowDestinationFlashes] = useState(true);
   const [routedColor, setRoutedColor] = useState(DEFAULT_ROUTED_COLOR);
   const [unroutedColor, setUnroutedColor] = useState(DEFAULT_UNROUTED_COLOR);
   const [originFlashColor, setOriginFlashColor] = useState(DEFAULT_ORIGIN_FLASH_COLOR);
   const [destinationFlashColor, setDestinationFlashColor] = useState(DEFAULT_DESTINATION_FLASH_COLOR);
+  const [dateExplorerOpen, setDateExplorerOpen] = useState(false);
   const [traceMenuOpen, setTraceMenuOpen] = useState(false);
+  const [stationFilterMode, setStationFilterMode] = useState(false);
+  const [filteredStationIds, setFilteredStationIds] = useState<string[]>([]);
   const [playing, setPlaying] = useState(false);
   const [pendingPlay, setPendingPlay] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -121,8 +130,9 @@ export function App() {
   }, [themePreference]);
 
   useEffect(() => {
-    fetchDateRange()
-      .then((range) => {
+    Promise.all([fetchDateRange(), fetchDaySummaries()])
+      .then(([range, days]) => {
+        setDaySummaries(days);
         setMinDate(range.minDate);
         setMaxDate(range.maxDate);
         if (!selectedDate) {
@@ -223,9 +233,15 @@ export function App() {
     };
   }, [playback, requiredRouteShards, routeShardFetchConcurrency]);
 
-  const activePaths = useMemo(() => {
+  const displayTrips = useMemo(() => {
     if (!playback) return [];
-    return playback.trips
+    if (filteredStationIds.length === 0) return playback.trips;
+    const filteredStations = new Set(filteredStationIds);
+    return playback.trips.filter((trip) => tripTouchesStationFilter(trip, filteredStations));
+  }, [filteredStationIds, playback]);
+
+  const activePaths = useMemo(() => {
+    return displayTrips
       .filter((trip) => trip.start <= currentTime && trip.end >= currentTime)
       .filter((trip) => showUnrouted || trip.routeKey)
       .map((trip): ActivePath => {
@@ -240,7 +256,7 @@ export function App() {
           path: slicePathWindow(path, progress, tailLength / 100)
         };
       });
-  }, [playback, currentTime, routeCache, tailLength, showUnrouted]);
+  }, [displayTrips, currentTime, routeCache, tailLength, showUnrouted]);
 
   const routedDistances = useMemo(() => {
     const distances = new globalThis.Map<string, number>();
@@ -254,9 +270,8 @@ export function App() {
   }, [playback]);
 
   const stationFlashes = useMemo(() => {
-    if (!playback) return [];
     const flashes: StationFlash[] = [];
-    for (const trip of playback.trips) {
+    for (const trip of displayTrips) {
       if (showOriginFlashes && trip.start <= currentTime && trip.start >= currentTime - ARRIVAL_FLASH_SECONDS) {
         flashes.push({
           id: `${trip.id}-departure`,
@@ -276,7 +291,7 @@ export function App() {
       }
     }
     return flashes;
-  }, [playback, currentTime, showOriginFlashes, showDestinationFlashes]);
+  }, [displayTrips, currentTime, showOriginFlashes, showDestinationFlashes]);
 
   const runningTotals = useMemo(() => {
     if (!playback) {
@@ -357,6 +372,7 @@ export function App() {
     return new globalThis.Map(stationsWithBalance.map((station) => [station.id, station]));
   }, [stationsWithBalance]);
 
+  const selectedStationSet = useMemo(() => new Set(filteredStationIds), [filteredStationIds]);
   const layers = useMemo(
     () => [
       new ScatterplotLayer<BalancedStation>({
@@ -364,9 +380,15 @@ export function App() {
         data: stationsWithBalance,
         getPosition: (station) => station.coord,
         getRadius: (station) => station.liveRadius,
-        getFillColor: [32, 130, 120, 150],
-        getLineColor: [234, 241, 237, 220],
+        getFillColor: (station) => selectedStationSet.has(station.id) ? SELECTED_STATION_FILL : DEFAULT_STATION_FILL,
+        getLineColor: (station) => selectedStationSet.has(station.id) ? SELECTED_STATION_LINE : DEFAULT_STATION_LINE,
+        updateTriggers: {
+          getFillColor: [filteredStationIds],
+          getLineColor: [filteredStationIds],
+          getLineWidth: [filteredStationIds]
+        },
         lineWidthMinPixels: 1,
+        getLineWidth: (station) => selectedStationSet.has(station.id) ? 5 : 1,
         stroked: true,
         pickable: true,
         onHover: (info) => {
@@ -378,6 +400,16 @@ export function App() {
                   stationId: (info.object as BalancedStation).id
                 }
               : null
+          );
+        },
+        onClick: (info) => {
+          if (!info.object) return;
+          const stationId = (info.object as BalancedStation).id;
+          if (!stationFilterMode) return;
+          setFilteredStationIds((value) =>
+            value.includes(stationId)
+              ? value.filter((selectedId) => selectedId !== stationId)
+              : [...value, stationId]
           );
         },
         radiusUnits: "meters"
@@ -416,7 +448,17 @@ export function App() {
         filled: true
       })
     ],
-    [activePaths, stationFlashes, stationsWithBalance, routedColor, unroutedColor, originFlashColor, destinationFlashColor]
+    [
+      activePaths,
+      selectedStationSet,
+      stationFlashes,
+      stationsWithBalance,
+      routedColor,
+      unroutedColor,
+      originFlashColor,
+      destinationFlashColor,
+      stationFilterMode
+    ]
   );
 
   const activeTrips = activePaths.length;
@@ -431,20 +473,54 @@ export function App() {
     <main className="app-shell">
       <section className="toolbar" aria-label="Playback controls">
         <div className="brand-block">
-          <h1>Cycle Hire Playback</h1>
+          <div className="brand-copy">
+            <h1>London Cycle Hire</h1>
+            <p>Powered by TfL Open Data</p>
+          </div>
           <span>{formatClock(currentTime)}</span>
+          <a
+            className="github-link"
+            href="https://github.com/nhols/ldn-cyclehire"
+            target="_blank"
+            rel="noreferrer"
+            aria-label="View source on GitHub"
+            title="View source on GitHub"
+          >
+            <Github size={18} />
+          </a>
         </div>
 
-        <label className="field date-field">
-          <span>Date</span>
-          <input
-            type="date"
-            min={minDate}
-            max={maxDate}
-            value={selectedDate}
-            onChange={(event) => setSelectedDate(event.target.value)}
-          />
-        </label>
+        <div className="date-discovery">
+          <label className="field date-field">
+            <span>Date</span>
+            <input
+              type="date"
+              min={minDate}
+              max={maxDate}
+              value={selectedDate}
+              onChange={(event) => setSelectedDate(event.target.value)}
+            />
+          </label>
+          <button
+            className={`icon-button date-explorer-button ${dateExplorerOpen ? "active" : ""}`}
+            type="button"
+            aria-label="Open date explorer"
+            title="Date explorer"
+            aria-expanded={dateExplorerOpen}
+            onClick={() => setDateExplorerOpen((value) => !value)}
+          >
+            <CalendarDays size={18} />
+          </button>
+          {dateExplorerOpen && (
+            <div className="date-explorer-popover" role="dialog" aria-label="Date explorer">
+              <div className="date-explorer-header">
+                <span>Date explorer</span>
+                <strong>{selectedDate}</strong>
+              </div>
+              <DateHistogram days={daySummaries} selectedDate={selectedDate} onChange={setSelectedDate} />
+            </div>
+          )}
+        </div>
 
         <button
           className="icon-button primary play-button"
@@ -506,6 +582,29 @@ export function App() {
           >
             <Settings2 size={18} />
           </button>
+          <div className="station-filter-controls">
+            <button
+              className={`icon-button station-filter-mode-button ${stationFilterMode ? "active" : ""}`}
+              type="button"
+              aria-pressed={stationFilterMode}
+              aria-label="Station filter mode"
+              title="Station filter mode"
+              onClick={() => setStationFilterMode((value) => !value)}
+            >
+              <Filter size={18} />
+              {filteredStationIds.length > 0 && <span>{filteredStationIds.length}</span>}
+            </button>
+            <button
+              className="icon-button station-filter-clear-button"
+              type="button"
+              aria-label="Clear station filters"
+              title="Clear station filters"
+              disabled={filteredStationIds.length === 0}
+              onClick={() => setFilteredStationIds([])}
+            >
+              <X size={16} />
+            </button>
+          </div>
           {traceMenuOpen && (
             <div className="trace-popover" role="dialog" aria-label="Trace settings">
               <div className="popover-group">
@@ -631,7 +730,7 @@ export function App() {
             <em>routed / unrouted</em>
           </div>
           <Metric
-            label="Journeys so far"
+            label="Journeys"
             value={runningTotals.journeys}
             split={{
               routed: runningTotals.routedJourneys,
@@ -646,10 +745,10 @@ export function App() {
               unrouted: activeUnroutedTrips
             }}
           />
-          <Metric label="Routed km so far" value={runningTotals.routedKilometres} decimals={1} />
+          <Metric label="Routed km" value={runningTotals.routedKilometres} decimals={1} />
           <Metric
             className="static-metric-start"
-            label="Total journeys"
+            label="Journeys"
             value={totalTrips}
             split={{
               routed: totalRoutedTrips,
@@ -777,6 +876,13 @@ function routeKeysForTrips(trips: PlaybackTrip[]): Set<string> {
     trips
       .map((trip) => trip.routeKey)
       .filter((routeKey): routeKey is string => routeKey !== null)
+  );
+}
+
+function tripTouchesStationFilter(trip: PlaybackTrip, stationIds: Set<string>): boolean {
+  return (
+    stationIds.has(stationKey(trip.fromStationId, trip.fromStationName)) ||
+    stationIds.has(stationKey(trip.toStationId, trip.toStationName))
   );
 }
 

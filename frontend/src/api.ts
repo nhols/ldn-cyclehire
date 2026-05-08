@@ -1,5 +1,6 @@
 import type {
   DateRangeResponse,
+  DaySummary,
   PlaybackResponse,
   StaticManifest,
   StaticPlaybackResponse,
@@ -14,6 +15,11 @@ const inFlightRouteShardPromises = new Map<string, Promise<StaticRoutesResponse>
 export async function fetchDateRange(): Promise<DateRangeResponse> {
   const manifest = await fetchManifest();
   return manifest.dateRange;
+}
+
+export async function fetchDaySummaries(): Promise<DaySummary[]> {
+  const manifest = await fetchManifest();
+  return manifest.days;
 }
 
 export async function fetchPlayback(date: string): Promise<PlaybackResponse> {

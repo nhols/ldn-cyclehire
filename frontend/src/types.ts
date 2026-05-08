@@ -61,6 +61,16 @@ export type DateRangeResponse = {
   tripCount: number;
 };
 
+export type DaySummary = {
+  date: string;
+  path: string;
+  gzipPath?: string;
+  trips: number;
+  routedTrips: number;
+  bytes?: number;
+  gzipBytes: number;
+};
+
 export type StaticPlaybackResponse = Omit<PlaybackResponse, "trips"> & {
   trips: StaticPlaybackTrip[];
 };
@@ -102,15 +112,7 @@ export type StaticManifest = {
       stationCount: number;
     };
   };
-  days: Array<{
-    date: string;
-    path: string;
-    gzipPath?: string;
-    trips: number;
-    routedTrips: number;
-    bytes?: number;
-    gzipBytes: number;
-  }>;
+  days: DaySummary[];
 };
 
 export type StaticRoutesResponse = {

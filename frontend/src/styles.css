@@ -68,7 +68,7 @@ select {
   z-index: 2;
   display: grid;
   grid-template-columns:
-    minmax(190px, 0.9fr) auto auto auto auto minmax(300px, 1.2fr) auto;
+    minmax(190px, 0.9fr) minmax(190px, auto) auto auto auto minmax(300px, 1.2fr) auto;
   gap: 12px;
   align-items: center;
   padding: 12px 14px;
@@ -78,8 +78,14 @@ select {
 
 .brand-block {
   display: flex;
-  align-items: baseline;
-  gap: 14px;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.brand-copy {
+  display: grid;
+  gap: 2px;
   min-width: 0;
 }
 
@@ -89,18 +95,55 @@ select {
   font-size: 18px;
   font-weight: 700;
   letter-spacing: 0;
+  line-height: 1.05;
+}
+
+.brand-copy p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.1;
 }
 
 .brand-block span {
+  margin-left: auto;
   color: var(--accent);
   font-variant-numeric: tabular-nums;
   font-weight: 700;
+}
+
+.github-link {
+  display: inline-grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  background: var(--control-bg);
+  text-decoration: none;
+}
+
+.github-link:hover {
+  color: var(--text-strong);
+  border-color: color-mix(in srgb, var(--accent) 58%, transparent);
 }
 
 .field,
 .scrubber {
   display: grid;
   gap: 4px;
+}
+
+.date-discovery {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(142px, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+  min-width: 0;
 }
 
 .field span,
@@ -147,6 +190,11 @@ select {
   border-color: color-mix(in srgb, var(--teal) 72%, transparent);
 }
 
+.icon-button:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
 .scrubber input {
   width: 100%;
   accent-color: var(--accent);
@@ -180,6 +228,9 @@ select {
 
 .trace-settings {
   position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .trace-popover {
@@ -188,7 +239,7 @@ select {
   right: 0;
   z-index: 4;
   display: grid;
-  width: 230px;
+  width: 280px;
   gap: 12px;
   padding: 12px;
   border: 1px solid var(--border);
@@ -261,6 +312,45 @@ select {
   accent-color: var(--teal);
 }
 
+.station-filter-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.station-filter-mode-button {
+  position: relative;
+}
+
+.station-filter-mode-button.active {
+  color: #fff;
+  border-color: #ed074c;
+  background: #ed074c;
+}
+
+.station-filter-mode-button span {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  display: grid;
+  min-width: 18px;
+  height: 18px;
+  place-items: center;
+  border: 1px solid var(--control-bg);
+  border-radius: 999px;
+  color: #fff;
+  background: #ed074c;
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.station-filter-clear-button:disabled {
+  color: var(--muted);
+  border-color: var(--border);
+  background: var(--control-bg);
+}
+
 .activity-scrubber {
   width: 100%;
   min-width: 280px;
@@ -291,6 +381,124 @@ select {
 .activity-cursor {
   stroke: var(--accent);
   stroke-width: 3;
+}
+
+.date-histogram {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.date-histogram-toolbar {
+  display: inline-grid;
+  grid-template-columns: repeat(3, minmax(68px, auto));
+  gap: 4px;
+  justify-content: start;
+}
+
+.date-histogram-toolbar button {
+  min-height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  background: var(--control-bg);
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.date-histogram-toolbar button:hover,
+.date-histogram-toolbar button.active {
+  color: var(--text-strong);
+  border-color: color-mix(in srgb, var(--accent) 64%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.date-histogram-chart {
+  height: 96px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--control-bg);
+  cursor: ew-resize;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.date-histogram-chart svg {
+  display: block;
+  height: 100%;
+}
+
+.date-bar {
+  fill: color-mix(in srgb, var(--teal) 58%, transparent);
+}
+
+.date-bar.selected {
+  fill: var(--accent);
+}
+
+.date-boundary {
+  stroke: var(--border-soft);
+  stroke-width: 1;
+}
+
+.date-boundary-label {
+  fill: var(--muted);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.date-cursor {
+  stroke: var(--accent);
+  stroke-width: 3;
+}
+
+.date-histogram-label {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.date-explorer-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 5;
+  display: grid;
+  width: min(820px, calc(100vw - 28px));
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--popover-bg);
+  box-shadow: 0 18px 44px var(--shadow);
+}
+
+.date-explorer-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.date-explorer-header span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.date-explorer-header strong {
+  color: var(--accent);
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
 }
 
 .map-stage {
@@ -507,9 +715,31 @@ select {
   }
 
   .date-field {
-    grid-column: 1 / 2;
-    grid-row: 2;
+    grid-column: auto;
+    grid-row: auto;
     min-width: 0;
+  }
+
+  .date-discovery {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    grid-template-columns: minmax(130px, 1fr) auto;
+  }
+
+  .date-explorer-button {
+    align-self: stretch;
+    width: 38px;
+    height: auto;
+  }
+
+  .date-explorer-popover {
+    width: calc(100vw - 20px);
+    max-height: min(560px, calc(100dvh - 132px));
+    overflow: auto;
+  }
+
+  .date-histogram-chart {
+    height: 76px;
   }
 
   .play-button,
@@ -520,7 +750,7 @@ select {
 
   .speed-field {
     grid-column: 4 / 5;
-    grid-row: 2;
+    grid-row: 3;
     min-width: 0;
   }
 
@@ -530,22 +760,27 @@ select {
 
   .scrubber {
     grid-column: 1 / -1;
-    grid-row: 3;
+    grid-row: 4;
   }
 
   .play-button {
     grid-column: 2 / 3;
-    grid-row: 2;
+    grid-row: 3;
   }
 
   .reset-button {
     grid-column: 3 / 4;
-    grid-row: 2;
+    grid-row: 3;
   }
 
   .trace-settings {
     grid-column: 5 / 6;
-    grid-row: 2;
+    grid-row: 3;
+  }
+
+  .station-filter-controls {
+    position: static;
+    gap: 6px;
   }
 
   .activity-scrubber {
@@ -572,13 +807,14 @@ select {
   }
 
   .stats-panel {
+    left: 10px;
     right: 10px;
     bottom: 10px;
     display: grid;
     grid-auto-flow: column;
     grid-auto-columns: minmax(112px, 1fr);
     grid-template-columns: none;
-    max-width: calc(100vw - 20px);
+    max-width: none;
     overflow-x: auto;
     scrollbar-width: none;
   }
@@ -588,13 +824,16 @@ select {
   }
 
   .metric {
-    min-width: 112px;
+    min-width: 0;
     padding: 8px 10px;
   }
 
   .metric-key {
-    min-width: 132px;
-    padding: 8px 14px 8px 10px;
+    display: none;
+  }
+
+  .metric-key::after {
+    display: none;
   }
 
   .metric-key span,
@@ -606,7 +845,20 @@ select {
 
   .metric-key strong,
   .metric strong {
-    font-size: 18px;
+    font-size: 17px;
+  }
+
+  .metric.static-metric-start {
+    padding-left: 14px;
+  }
+
+  .metric.static-metric-start::before {
+    top: 8px;
+    right: auto;
+    bottom: 8px;
+    left: 0;
+    width: 1px;
+    height: auto;
   }
 }
 
