@@ -478,6 +478,14 @@ export function App() {
   const totalRoutedTrips = summary?.routedTrips ?? 0;
   const totalTrips = summary?.matchedTrips ?? 0;
   const totalUnroutedTrips = Math.max(0, totalTrips - totalRoutedTrips);
+  const dataLoading = loading || routeLoading;
+  const routeLoadingProgress =
+    requiredRouteShards.length === 0
+      ? 0
+      : (loadedRouteShardCount / requiredRouteShards.length) * 100;
+  const loadingProgressLabel = routeLoading
+    ? `Loading routes ${loadedRouteShardCount.toLocaleString()} of ${requiredRouteShards.length.toLocaleString()}`
+    : `Loading ${selectedDate}`;
 
   return (
     <main className="app-shell">
@@ -768,15 +776,26 @@ export function App() {
           <Metric label="Stations" value={summary?.stationCount ?? 0} />
           <Metric label="Unmatched" value={summary?.unmatchedTrips ?? 0} />
         </aside>
-        {(loading || routeLoading || error) && (
+        {dataLoading && (
+          <div
+            className="loading-progress"
+            role="progressbar"
+            aria-label={loadingProgressLabel}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={routeLoading ? Math.round(routeLoadingProgress) : undefined}
+          >
+            <div className="loading-progress-track">
+              <div
+                className={`loading-progress-fill ${routeLoading ? "" : "indeterminate"}`}
+                style={routeLoading ? { width: `${routeLoadingProgress}%` } : undefined}
+              />
+            </div>
+          </div>
+        )}
+        {error && (
           <div className="status-panel">
-            {loading && <span>Loading {selectedDate}</span>}
-            {routeLoading && (
-              <span>
-                Loading routes {loadedRouteShardCount.toLocaleString()} / {requiredRouteShards.length.toLocaleString()}
-              </span>
-            )}
-            {error && <span>{error}</span>}
+            <span>{error}</span>
           </div>
         )}
         {hoverInfo && stationById.has(hoverInfo.stationId) && (
