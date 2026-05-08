@@ -423,9 +423,15 @@ select {
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--control-bg);
-  cursor: ew-resize;
+  cursor: grab;
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
+  touch-action: pan-y;
+  user-select: none;
+}
+
+.date-histogram-chart:active {
+  cursor: grabbing;
 }
 
 .date-histogram-chart svg {

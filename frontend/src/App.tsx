@@ -143,11 +143,13 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
     setLoading(true);
     setError(null);
     setPlaying(false);
     fetchPlayback(selectedDate)
       .then((data) => {
+        if (cancelled) return;
         const routeShardIds = routeShardIdsForTrips(data.trips);
         setPlayback(data);
         setRouteCache(new globalThis.Map());
@@ -157,8 +159,16 @@ export function App() {
         const firstTrip = data.trips[0];
         setCurrentTime(firstTrip ? Math.max(0, firstTrip.start - 600) : 7 * 3600);
       })
-      .catch((reason) => setError(String(reason)))
-      .finally(() => setLoading(false));
+      .catch((reason) => {
+        if (!cancelled) setError(String(reason));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [selectedDate]);
 
   useEffect(() => {

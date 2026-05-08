@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { PointerEvent } from "react";
 import type { DaySummary } from "./types";
 
 type DateHistogramProps = {
@@ -23,9 +24,23 @@ const DAY_WIDTH_BY_ZOOM: Record<ZoomWidth, number> = {
 const SVG_HEIGHT = 88;
 const PLOT_TOP = 16;
 const PLOT_HEIGHT = 64;
+const DRAG_THRESHOLD_PX = 8;
+
+type DragState = {
+  pointerId: number;
+  startClientX: number;
+  startClientY: number;
+  startScrollLeft: number;
+  dragged: boolean;
+};
 
 export function DateHistogram({ days, selectedDate, onChange }: DateHistogramProps) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<DragState | null>(null);
+  const autoScrollRef = useRef<{ initialized: boolean; dayWidth: number | null }>({
+    initialized: false,
+    dayWidth: null
+  });
   const [hoveredDate, setHoveredDate] = useState<string | null>(null);
   const [zoomWidth, setZoomWidth] = useState<ZoomWidth>("month");
   const sortedDays = useMemo(() => [...days].sort((a, b) => a.date.localeCompare(b.date)), [days]);
@@ -58,6 +73,13 @@ export function DateHistogram({ days, selectedDate, onChange }: DateHistogramPro
   useEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport || selectedIndex < 0) return;
+    const shouldAutoScroll = !autoScrollRef.current.initialized || autoScrollRef.current.dayWidth !== dayWidth;
+    if (!shouldAutoScroll) return;
+
+    autoScrollRef.current = {
+      initialized: true,
+      dayWidth
+    };
     const selectedX = selectedIndex * dayWidth;
     viewport.scrollTo({
       left: Math.max(0, selectedX - viewport.clientWidth / 2),
@@ -72,6 +94,65 @@ export function DateHistogram({ days, selectedDate, onChange }: DateHistogramPro
 
   function hoverDate(clientX: number) {
     setHoveredDate(dayForClientX(clientX)?.date ?? null);
+  }
+
+  function handlePointerDown(event: PointerEvent<HTMLDivElement>) {
+    const viewport = event.currentTarget;
+    viewport.setPointerCapture(event.pointerId);
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startScrollLeft: viewport.scrollLeft,
+      dragged: false
+    };
+  }
+
+  function handlePointerMove(event: PointerEvent<HTMLDivElement>) {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) {
+      if (event.pointerType !== "touch") {
+        hoverDate(event.clientX);
+      }
+      return;
+    }
+
+    const deltaX = event.clientX - drag.startClientX;
+    const deltaY = event.clientY - drag.startClientY;
+    if (!drag.dragged && Math.hypot(deltaX, deltaY) > DRAG_THRESHOLD_PX) {
+      drag.dragged = true;
+    }
+
+    if (drag.dragged) {
+      event.currentTarget.scrollLeft = drag.startScrollLeft - deltaX;
+      setHoveredDate(null);
+      event.preventDefault();
+      return;
+    }
+
+    if (event.pointerType !== "touch") {
+      hoverDate(event.clientX);
+    }
+  }
+
+  function handlePointerUp(event: PointerEvent<HTMLDivElement>) {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    dragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+
+    if (!drag.dragged) {
+      pickDate(event.clientX);
+    }
+  }
+
+  function handlePointerCancel(event: PointerEvent<HTMLDivElement>) {
+    if (dragRef.current?.pointerId === event.pointerId) {
+      dragRef.current = null;
+    }
+    setHoveredDate(null);
   }
 
   function dayForClientX(clientX: number): DaySummary | null {
@@ -101,17 +182,15 @@ export function DateHistogram({ days, selectedDate, onChange }: DateHistogramPro
       <div
         ref={viewportRef}
         className="date-histogram-chart"
-        onPointerDown={(event) => {
-          event.currentTarget.setPointerCapture(event.pointerId);
-          pickDate(event.clientX);
-        }}
-        onPointerMove={(event) => {
-          hoverDate(event.clientX);
-          if (event.buttons === 1) {
-            pickDate(event.clientX);
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerCancel}
+        onPointerLeave={() => {
+          if (!dragRef.current) {
+            setHoveredDate(null);
           }
         }}
-        onPointerLeave={() => setHoveredDate(null)}
       >
         <svg
           width={width}
