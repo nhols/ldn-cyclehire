@@ -22,6 +22,10 @@ const MAP_STYLES = {
 } satisfies Record<ResolvedTheme, string>;
 const SPEEDS = [1, 10, 60, 180, 600, 1200, 2400];
 const ARRIVAL_FLASH_SECONDS = 90;
+const STATION_BASE_RADIUS_METERS = 44;
+const STATION_MIN_RADIUS_METERS = 14;
+const STATION_MAX_RADIUS_METERS = 130;
+const STATION_BALANCE_RADIUS_SCALE = 4;
 const DEFAULT_ROUTED_COLOR = "#467cfb";
 const DEFAULT_UNROUTED_COLOR = "#ed074c";
 const DEFAULT_ORIGIN_FLASH_COLOR = "#52b4d2";
@@ -50,7 +54,19 @@ type StationFlash = {
 type HoverInfo = {
   x: number;
   y: number;
-  station: PlaybackStation;
+  stationId: string;
+};
+
+type StationBalance = {
+  arrivals: number;
+  departures: number;
+};
+
+type BalancedStation = PlaybackStation & {
+  liveArrivals: number;
+  liveDepartures: number;
+  liveNet: number;
+  liveRadius: number;
 };
 
 export function App() {
@@ -293,13 +309,61 @@ export function App() {
     };
   }, [playback, currentTime, routedDistances]);
 
+  const stationBalance = useMemo(() => {
+    const balances = new globalThis.Map<string, StationBalance>();
+    if (!playback) return balances;
+
+    for (const trip of playback.trips) {
+      if (trip.start <= currentTime) {
+        const departureKey = stationKey(trip.fromStationId, trip.fromStationName);
+        const balance = balances.get(departureKey) ?? { arrivals: 0, departures: 0 };
+        balances.set(departureKey, {
+          ...balance,
+          departures: balance.departures + 1
+        });
+      }
+
+      if (trip.end <= currentTime) {
+        const arrivalKey = stationKey(trip.toStationId, trip.toStationName);
+        const balance = balances.get(arrivalKey) ?? { arrivals: 0, departures: 0 };
+        balances.set(arrivalKey, {
+          ...balance,
+          arrivals: balance.arrivals + 1
+        });
+      }
+    }
+
+    return balances;
+  }, [playback, currentTime]);
+
+  const stationsWithBalance = useMemo((): BalancedStation[] => {
+    if (!playback) return [];
+    return playback.stations.map((station) => {
+      const balance = stationBalance.get(station.id);
+      const liveArrivals = balance?.arrivals ?? 0;
+      const liveDepartures = balance?.departures ?? 0;
+      const liveNet = liveArrivals - liveDepartures;
+      return {
+        ...station,
+        liveArrivals,
+        liveDepartures,
+        liveNet,
+        liveRadius: stationRadiusForBalance(liveNet)
+      };
+    });
+  }, [playback, stationBalance]);
+
+  const stationById = useMemo(() => {
+    return new globalThis.Map(stationsWithBalance.map((station) => [station.id, station]));
+  }, [stationsWithBalance]);
+
   const layers = useMemo(
     () => [
-      new ScatterplotLayer<PlaybackStation>({
+      new ScatterplotLayer<BalancedStation>({
         id: "stations",
-        data: playback?.stations ?? [],
+        data: stationsWithBalance,
         getPosition: (station) => station.coord,
-        getRadius: (station) => Math.max(18, Math.sqrt(station.tripCount) * 4),
+        getRadius: (station) => station.liveRadius,
         getFillColor: [32, 130, 120, 150],
         getLineColor: [234, 241, 237, 220],
         lineWidthMinPixels: 1,
@@ -311,7 +375,7 @@ export function App() {
               ? {
                   x: info.x,
                   y: info.y,
-                  station: info.object as PlaybackStation
+                  stationId: (info.object as BalancedStation).id
                 }
               : null
           );
@@ -352,7 +416,7 @@ export function App() {
         filled: true
       })
     ],
-    [activePaths, stationFlashes, playback, routedColor, unroutedColor, originFlashColor, destinationFlashColor]
+    [activePaths, stationFlashes, stationsWithBalance, routedColor, unroutedColor, originFlashColor, destinationFlashColor]
   );
 
   const activeTrips = activePaths.length;
@@ -561,6 +625,11 @@ export function App() {
           <Map mapStyle={MAP_STYLES[resolvedTheme]} reuseMaps />
         </DeckGL>
         <aside className="stats-panel">
+          <div className="metric-key" aria-label="Metric format">
+            <span>Key</span>
+            <strong>Metric</strong>
+            <em>routed / unrouted</em>
+          </div>
           <Metric
             label="Journeys so far"
             value={runningTotals.journeys}
@@ -601,16 +670,31 @@ export function App() {
             {error && <span>{error}</span>}
           </div>
         )}
-        {hoverInfo && (
+        {hoverInfo && stationById.has(hoverInfo.stationId) && (
           <div
             className="map-tooltip"
             style={{
               transform: `translate(${hoverInfo.x + 12}px, ${hoverInfo.y + 12}px)`
             }}
           >
-            <strong>{hoverInfo.station.name}</strong>
-            <span>{(hoverInfo.station.departureCount ?? 0).toLocaleString()} departures</span>
-            <span>{(hoverInfo.station.arrivalCount ?? 0).toLocaleString()} arrivals</span>
+            {(() => {
+              const station = stationById.get(hoverInfo.stationId);
+              if (!station) return null;
+              const arrivals = station.liveArrivals;
+              const departures = station.liveDepartures;
+              const net = station.liveNet;
+              const totalDepartures = station.departureCount ?? 0;
+              const totalArrivals = station.arrivalCount ?? 0;
+              const totalNet = totalArrivals - totalDepartures;
+              return (
+                <>
+                  <strong>{station.name}</strong>
+                  <span>departures / arrivals / net</span>
+                  <span>live: {formatBalanceCounts(departures, arrivals, net)}</span>
+                  <span>total: {formatBalanceCounts(totalDepartures, totalArrivals, totalNet)}</span>
+                </>
+              );
+            })()}
           </div>
         )}
       </section>
@@ -694,6 +778,31 @@ function routeKeysForTrips(trips: PlaybackTrip[]): Set<string> {
       .map((trip) => trip.routeKey)
       .filter((routeKey): routeKey is string => routeKey !== null)
   );
+}
+
+function stationRadiusForBalance(balance: number): number {
+  const signedDelta = Math.sign(balance) * Math.sqrt(Math.abs(balance)) * STATION_BALANCE_RADIUS_SCALE;
+  return clamp(
+    STATION_BASE_RADIUS_METERS + signedDelta,
+    STATION_MIN_RADIUS_METERS,
+    STATION_MAX_RADIUS_METERS
+  );
+}
+
+function stationKey(stationId: string | null, stationName: string): string {
+  return `${stationId ?? ""}\u001f${stationName}`;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function formatBalanceCounts(departures: number, arrivals: number, net: number): string {
+  return `${departures.toLocaleString()} / ${arrivals.toLocaleString()} / ${formatSignedCount(net)}`;
+}
+
+function formatSignedCount(value: number): string {
+  return `${value > 0 ? "+" : ""}${value.toLocaleString()}`;
 }
 
 function isLowMemoryRouteMode(): boolean {

@@ -310,13 +310,56 @@ select {
   bottom: 14px;
   z-index: 1;
   display: grid;
-  grid-template-columns: repeat(6, minmax(130px, 1fr));
+  grid-template-columns: minmax(140px, 0.72fr) repeat(6, minmax(130px, 1fr));
   gap: 1px;
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--panel-bg);
   backdrop-filter: blur(8px);
+}
+
+.metric-key {
+  position: relative;
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 18px 10px 12px;
+}
+
+.metric-key::after {
+  position: absolute;
+  top: 10px;
+  right: 0;
+  bottom: 10px;
+  width: 1px;
+  background: var(--border);
+  content: "";
+}
+
+.metric-key span {
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 700;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.metric-key em {
+  color: var(--muted);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 700;
+  line-height: 1.1;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.metric-key strong {
+  color: var(--text-strong);
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
 }
 
 .metric {
@@ -549,11 +592,19 @@ select {
     padding: 8px 10px;
   }
 
+  .metric-key {
+    min-width: 132px;
+    padding: 8px 14px 8px 10px;
+  }
+
+  .metric-key span,
+  .metric-key em,
   .metric span {
     font-size: 10px;
     line-height: 1.15;
   }
 
+  .metric-key strong,
   .metric strong {
     font-size: 18px;
   }
