@@ -71,6 +71,43 @@ make frontend
 
 Open `http://localhost:5173`.
 
+Querying the data
+-----------------
+
+Open an interactive SQL shell over the local Parquet datasets:
+
+```sh
+make sql
+```
+
+Useful shell commands:
+
+```text
+.tables
+.schema trips
+.quit
+```
+
+Tab completes shell commands and registered table names, arrow keys recall
+history, and `Ctrl+C` cancels the current input or running query.
+
+Example query:
+
+```sql
+SELECT CAST(start_at AS DATE) AS day, COUNT(*) AS trips
+FROM trips
+WHERE start_at >= '2025-06-01' AND start_at < '2025-07-01'
+GROUP BY day
+ORDER BY trips DESC
+LIMIT 10;
+```
+
+For one-off queries:
+
+```sh
+uv run cyclehire sql --query "SELECT COUNT(*) AS trips FROM trips"
+```
+
 Exporting to R2
 ---------------
 

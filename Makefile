@@ -4,7 +4,7 @@ R2_UPLOAD_DIR ?= /tmp/cyclehire-r2-upload
 CDN_DIR ?= data/cdn
 ROUTE_PROVIDER ?= mapbox
 
-.PHONY: install dev prep-tfl-data export-static export-static-full prepare-r2-upload upload-static-r2 upload-static-r2-bulk upload-static-r2-wrangler frontend
+.PHONY: install dev prep-tfl-data sql export-static export-static-full prepare-r2-upload upload-static-r2 upload-static-r2-bulk upload-static-r2-wrangler frontend
 
 install:
 	uv sync
@@ -17,6 +17,9 @@ prep-tfl-data:
 	uv run cyclehire normalize
 	uv run cyclehire validate
 	uv run cyclehire bikepoints
+
+sql:
+	uv run cyclehire sql
 
 export-static:
 	uv run cyclehire export-static --date 2025-06-18 --output-dir frontend/public/data --route-provider $(ROUTE_PROVIDER)

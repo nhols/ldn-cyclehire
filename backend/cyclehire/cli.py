@@ -24,6 +24,7 @@ from cyclehire.routes import (
     run_google_bicycle_routes,
     run_mapbox_cycling_routes,
 )
+from cyclehire.sql import run_sql_shell
 from cyclehire.validate import ValidatePipelineConfig, run_validate_pipeline
 
 
@@ -311,6 +312,22 @@ def export_static(
             route_shard_compression_ratio=route_shard_compression_ratio,
         )
     )
+
+
+@app.command()
+def sql(
+    context: typer.Context,
+    query: Annotated[
+        str | None,
+        typer.Option("--query", "-q", help="Run one SQL query and exit instead of opening the REPL."),
+    ] = None,
+    display_limit: Annotated[
+        int,
+        typer.Option("--limit", "-n", min=1, help="Maximum rows to display for each query result."),
+    ] = 100,
+) -> None:
+    cli_context = _cli_context(context)
+    run_sql_shell(cli_context.data_dir, query=query, display_limit=display_limit)
 
 
 def parse_sample_dates(values: list[str] | None) -> tuple[date, ...]:
