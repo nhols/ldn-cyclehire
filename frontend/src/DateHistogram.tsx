@@ -25,18 +25,24 @@ const SVG_HEIGHT = 88;
 const PLOT_TOP = 16;
 const PLOT_HEIGHT = 64;
 const DRAG_THRESHOLD_PX = 8;
+const INERTIA_FRICTION_PER_FRAME = 0.92;
+const INERTIA_MIN_VELOCITY = 0.02;
 
 type DragState = {
   pointerId: number;
   startClientX: number;
   startClientY: number;
   startScrollLeft: number;
+  lastScrollLeft: number;
+  lastTimestamp: number;
+  velocity: number;
   dragged: boolean;
 };
 
 export function DateHistogram({ days, selectedDate, onChange }: DateHistogramProps) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
+  const inertiaFrameRef = useRef<number | null>(null);
   const autoScrollRef = useRef<{ initialized: boolean; dayWidth: number | null }>({
     initialized: false,
     dayWidth: null
@@ -87,6 +93,10 @@ export function DateHistogram({ days, selectedDate, onChange }: DateHistogramPro
     });
   }, [dayWidth, selectedIndex]);
 
+  useEffect(() => {
+    return () => stopInertia();
+  }, []);
+
   function pickDate(clientX: number) {
     const day = dayForClientX(clientX);
     if (day) onChange(day.date);
@@ -98,12 +108,18 @@ export function DateHistogram({ days, selectedDate, onChange }: DateHistogramPro
 
   function handlePointerDown(event: PointerEvent<HTMLDivElement>) {
     const viewport = event.currentTarget;
-    viewport.setPointerCapture(event.pointerId);
+    stopInertia();
+    if (event.pointerType !== "touch") {
+      viewport.setPointerCapture(event.pointerId);
+    }
     dragRef.current = {
       pointerId: event.pointerId,
       startClientX: event.clientX,
       startClientY: event.clientY,
       startScrollLeft: viewport.scrollLeft,
+      lastScrollLeft: viewport.scrollLeft,
+      lastTimestamp: event.timeStamp,
+      velocity: 0,
       dragged: false
     };
   }
@@ -124,9 +140,16 @@ export function DateHistogram({ days, selectedDate, onChange }: DateHistogramPro
     }
 
     if (drag.dragged) {
-      event.currentTarget.scrollLeft = drag.startScrollLeft - deltaX;
       setHoveredDate(null);
-      event.preventDefault();
+      if (event.pointerType !== "touch") {
+        const nextScrollLeft = drag.startScrollLeft - deltaX;
+        const elapsed = Math.max(1, event.timeStamp - drag.lastTimestamp);
+        event.currentTarget.scrollLeft = nextScrollLeft;
+        drag.velocity = (event.currentTarget.scrollLeft - drag.lastScrollLeft) / elapsed;
+        drag.lastScrollLeft = event.currentTarget.scrollLeft;
+        drag.lastTimestamp = event.timeStamp;
+        event.preventDefault();
+      }
       return;
     }
 
@@ -145,6 +168,8 @@ export function DateHistogram({ days, selectedDate, onChange }: DateHistogramPro
 
     if (!drag.dragged) {
       pickDate(event.clientX);
+    } else if (event.pointerType !== "touch") {
+      startInertia(event.currentTarget, drag.velocity);
     }
   }
 
@@ -153,6 +178,42 @@ export function DateHistogram({ days, selectedDate, onChange }: DateHistogramPro
       dragRef.current = null;
     }
     setHoveredDate(null);
+  }
+
+  function startInertia(viewport: HTMLDivElement, initialVelocity: number) {
+    let velocity = initialVelocity;
+    let lastTimestamp: number | null = null;
+
+    const step = (timestamp: number) => {
+      if (lastTimestamp === null) {
+        lastTimestamp = timestamp;
+      }
+      const elapsed = timestamp - lastTimestamp;
+      lastTimestamp = timestamp;
+
+      const maxScrollLeft = viewport.scrollWidth - viewport.clientWidth;
+      const nextScrollLeft = Math.max(0, Math.min(maxScrollLeft, viewport.scrollLeft + velocity * elapsed));
+      const hitBoundary = nextScrollLeft === 0 || nextScrollLeft === maxScrollLeft;
+      viewport.scrollLeft = nextScrollLeft;
+      velocity *= Math.pow(INERTIA_FRICTION_PER_FRAME, elapsed / 16.67);
+
+      if (Math.abs(velocity) > INERTIA_MIN_VELOCITY && !hitBoundary) {
+        inertiaFrameRef.current = requestAnimationFrame(step);
+      } else {
+        inertiaFrameRef.current = null;
+      }
+    };
+
+    if (Math.abs(velocity) > INERTIA_MIN_VELOCITY) {
+      inertiaFrameRef.current = requestAnimationFrame(step);
+    }
+  }
+
+  function stopInertia() {
+    if (inertiaFrameRef.current !== null) {
+      cancelAnimationFrame(inertiaFrameRef.current);
+      inertiaFrameRef.current = null;
+    }
   }
 
   function dayForClientX(clientX: number): DaySummary | null {

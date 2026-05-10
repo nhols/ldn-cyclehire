@@ -426,7 +426,8 @@ select {
   cursor: grab;
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
-  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
   user-select: none;
 }
 
