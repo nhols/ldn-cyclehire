@@ -5,7 +5,7 @@ import { Map } from "react-map-gl/maplibre";
 import { CalendarDays, Filter, Github, Monitor, Moon, Settings2, Pause, Play, RotateCcw, Sun, X } from "lucide-react";
 import { ActivityScrubber } from "./ActivityScrubber";
 import { DateHistogram } from "./DateHistogram";
-import { fetchDateRange, fetchDaySummaries, fetchPlayback, fetchRouteShard } from "./api";
+import { fetchDateRange, fetchDaySummaries, fetchPlayback, fetchRouteShardRoutes } from "./api";
 import { curvedPath, formatClock, slicePathWindow } from "./paths";
 import type { Coord, DaySummary, PlaybackResponse, PlaybackStation, PlaybackTrip } from "./types";
 
@@ -82,7 +82,8 @@ export function App() {
   const [maxDate, setMaxDate] = useState("");
   const [daySummaries, setDaySummaries] = useState<DaySummary[]>([]);
   const [playback, setPlayback] = useState<PlaybackResponse | null>(null);
-  const [routeCache, setRouteCache] = useState<globalThis.Map<string, Coord[]>>(() => new globalThis.Map());
+  const routeCacheRef = useRef<globalThis.Map<string, Coord[]>>(new globalThis.Map());
+  const [routeCacheVersion, setRouteCacheVersion] = useState(0);
   const [requiredRouteShards, setRequiredRouteShards] = useState<string[]>([]);
   const [loadedRouteShardCount, setLoadedRouteShardCount] = useState(0);
   const [currentTime, setCurrentTime] = useState(7 * 3600);
@@ -152,7 +153,8 @@ export function App() {
         if (cancelled) return;
         const routeShardIds = routeShardIdsForTrips(data.trips);
         setPlayback(data);
-        setRouteCache(new globalThis.Map());
+        routeCacheRef.current = new globalThis.Map();
+        setRouteCacheVersion((value) => value + 1);
         setRequiredRouteShards(routeShardIds);
         setLoadedRouteShardCount(0);
         setPendingPlay(false);
@@ -219,19 +221,16 @@ export function App() {
     async function loadRouteShards() {
       for (let index = 0; index < routeShardIds.length; index += routeShardFetchConcurrency) {
         const batch = routeShardIds.slice(index, index + routeShardFetchConcurrency);
-        const payloads = await Promise.all(batch.map((shardId) => fetchRouteShard(shardId)));
+        const routeBatches = await Promise.all(
+          batch.map((shardId) => fetchRouteShardRoutes(shardId, routeKeysForDay))
+        );
         if (cancelled) return;
-        setRouteCache((value) => {
-          const next = new globalThis.Map(value);
-          for (const payload of payloads) {
-            for (const [routeKey, coordinates] of Object.entries(payload.routes)) {
-              if (routeKeysForDay.has(routeKey)) {
-                next.set(routeKey, coordinates);
-              }
-            }
+        for (const routes of routeBatches) {
+          for (const [routeKey, coordinates] of routes) {
+            routeCacheRef.current.set(routeKey, coordinates);
           }
-          return next;
-        });
+        }
+        setRouteCacheVersion((value) => value + 1);
         setLoadedRouteShardCount((value) => value + batch.length);
       }
     }
@@ -257,7 +256,7 @@ export function App() {
       .map((trip): ActivePath => {
         const progress = (currentTime - trip.start) / Math.max(1, trip.end - trip.start);
         const routed = trip.routeKey !== null;
-        const routePath = routePathForTrip(trip, routeCache);
+        const routePath = routePathForTrip(trip, routeCacheRef.current);
         const path = routePath ?? curvedPath(trip.fromCoord, trip.toCoord);
         return {
           id: trip.id,
@@ -266,7 +265,7 @@ export function App() {
           path: slicePathWindow(path, progress, tailLength / 100)
         };
       });
-  }, [displayTrips, currentTime, routeCache, tailLength, showUnrouted]);
+  }, [displayTrips, currentTime, routeCacheVersion, tailLength, showUnrouted]);
 
   const routedDistances = useMemo(() => {
     const distances = new globalThis.Map<string, number>();

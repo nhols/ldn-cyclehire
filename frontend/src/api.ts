@@ -2,6 +2,7 @@ import type {
   DateRangeResponse,
   DaySummary,
   PlaybackResponse,
+  Coord,
   StaticManifest,
   StaticPlaybackResponse,
   StaticRoutesResponse
@@ -42,14 +43,24 @@ export async function fetchPlayback(date: string): Promise<PlaybackResponse> {
   };
 }
 
-export async function fetchRouteShard(shardId: string): Promise<StaticRoutesResponse> {
+export async function fetchRouteShardRoutes(
+  shardId: string,
+  routeKeys: Set<string>
+): Promise<globalThis.Map<string, Coord[]>> {
   const manifest = await fetchManifest();
   const routeShards = new Map((manifest.files.routes.shards ?? []).map((shard) => [shard.id, shard.path]));
   const path = routeShards.get(shardId) ?? manifest.files.routes.shardTemplate?.replace("{shard}", shardId);
   if (!path) {
     throw new Error(`No route shard path for ${shardId}`);
   }
-  return fetchRouteShardPath(shardId, path);
+  const payload = await fetchRouteShardPath(shardId, path);
+  const routes = new globalThis.Map<string, Coord[]>();
+  for (const [routeKey, coordinates] of Object.entries(payload.routes)) {
+    if (routeKeys.has(routeKey)) {
+      routes.set(routeKey, coordinates);
+    }
+  }
+  return routes;
 }
 
 function fetchManifest(): Promise<StaticManifest> {
