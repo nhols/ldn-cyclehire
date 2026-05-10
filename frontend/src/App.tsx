@@ -107,6 +107,8 @@ export function App() {
   const [hoverInfo, setHoverInfo] = useState<HoverInfo | null>(null);
   const frameRef = useRef<number | null>(null);
   const lastTickRef = useRef<number | null>(null);
+  const dateDiscoveryRef = useRef<HTMLDivElement | null>(null);
+  const traceSettingsRef = useRef<HTMLDivElement | null>(null);
   const resolvedTheme = themePreference === "system" ? systemTheme : themePreference;
   const routeShardFetchConcurrency = isLowMemoryRouteMode()
     ? MOBILE_ROUTE_SHARD_FETCH_CONCURRENCY
@@ -129,6 +131,34 @@ export function App() {
   useEffect(() => {
     window.localStorage.setItem(THEME_STORAGE_KEY, themePreference);
   }, [themePreference]);
+
+  useEffect(() => {
+    if (!dateExplorerOpen && !traceMenuOpen) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (dateExplorerOpen && !dateDiscoveryRef.current?.contains(target)) {
+        setDateExplorerOpen(false);
+      }
+      if (traceMenuOpen && !traceSettingsRef.current?.contains(target)) {
+        setTraceMenuOpen(false);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setDateExplorerOpen(false);
+      setTraceMenuOpen(false);
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [dateExplorerOpen, traceMenuOpen]);
 
   useEffect(() => {
     Promise.all([fetchDateRange(), fetchDaySummaries()])
@@ -509,7 +539,7 @@ export function App() {
           </a>
         </div>
 
-        <div className="date-discovery">
+        <div className="date-discovery" ref={dateDiscoveryRef}>
           <label className="field date-field">
             <span>Date</span>
             <input
@@ -590,7 +620,7 @@ export function App() {
           />
         </label>
 
-        <div className="trace-settings">
+        <div className="trace-settings" ref={traceSettingsRef}>
           <button
             className={`icon-button ${traceMenuOpen ? "active" : ""}`}
             type="button"
