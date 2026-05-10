@@ -3,6 +3,7 @@ import type {
   DaySummary,
   PlaybackResponse,
   Coord,
+  FlatPath,
   StaticManifest,
   StaticPlaybackResponse,
   StaticRoutesResponse
@@ -46,7 +47,7 @@ export async function fetchPlayback(date: string): Promise<PlaybackResponse> {
 export async function fetchRouteShardRoutes(
   shardId: string,
   routeKeys: Set<string>
-): Promise<globalThis.Map<string, Coord[]>> {
+): Promise<globalThis.Map<string, FlatPath>> {
   const manifest = await fetchManifest();
   const routeShards = new Map((manifest.files.routes.shards ?? []).map((shard) => [shard.id, shard.path]));
   const path = routeShards.get(shardId) ?? manifest.files.routes.shardTemplate?.replace("{shard}", shardId);
@@ -54,13 +55,22 @@ export async function fetchRouteShardRoutes(
     throw new Error(`No route shard path for ${shardId}`);
   }
   const payload = await fetchRouteShardPath(shardId, path);
-  const routes = new globalThis.Map<string, Coord[]>();
+  const routes = new globalThis.Map<string, FlatPath>();
   for (const [routeKey, coordinates] of Object.entries(payload.routes)) {
     if (routeKeys.has(routeKey)) {
-      routes.set(routeKey, coordinates);
+      routes.set(routeKey, flattenCoordinates(coordinates));
     }
   }
   return routes;
+}
+
+function flattenCoordinates(coordinates: Coord[]): FlatPath {
+  const path = new Float32Array(coordinates.length * 2);
+  for (let index = 0; index < coordinates.length; index += 1) {
+    path[index * 2] = coordinates[index][0];
+    path[index * 2 + 1] = coordinates[index][1];
+  }
+  return path;
 }
 
 function fetchManifest(): Promise<StaticManifest> {

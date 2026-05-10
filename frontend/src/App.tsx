@@ -6,8 +6,8 @@ import { CalendarDays, Filter, Github, Monitor, Moon, Settings2, Pause, Play, Ro
 import { ActivityScrubber } from "./ActivityScrubber";
 import { DateHistogram } from "./DateHistogram";
 import { fetchDateRange, fetchDaySummaries, fetchPlayback, fetchRouteShardRoutes } from "./api";
-import { curvedPath, formatClock, slicePathWindow } from "./paths";
-import type { Coord, DaySummary, PlaybackResponse, PlaybackStation, PlaybackTrip } from "./types";
+import { curvedFlatPath, formatClock, sliceFlatPathWindow } from "./paths";
+import type { DaySummary, FlatPath, PlaybackResponse, PlaybackStation, PlaybackTrip } from "./types";
 
 const LONDON_VIEW = {
   longitude: -0.11,
@@ -44,7 +44,7 @@ type ResolvedTheme = "dark" | "light";
 
 type ActivePath = {
   id: string;
-  path: [number, number][];
+  path: FlatPath;
   progress: number;
   routed: boolean;
 };
@@ -82,7 +82,7 @@ export function App() {
   const [maxDate, setMaxDate] = useState("");
   const [daySummaries, setDaySummaries] = useState<DaySummary[]>([]);
   const [playback, setPlayback] = useState<PlaybackResponse | null>(null);
-  const routeCacheRef = useRef<globalThis.Map<string, Coord[]>>(new globalThis.Map());
+  const routeCacheRef = useRef<globalThis.Map<string, FlatPath>>(new globalThis.Map());
   const [routeCacheVersion, setRouteCacheVersion] = useState(0);
   const [requiredRouteShards, setRequiredRouteShards] = useState<string[]>([]);
   const [loadedRouteShardCount, setLoadedRouteShardCount] = useState(0);
@@ -257,12 +257,12 @@ export function App() {
         const progress = (currentTime - trip.start) / Math.max(1, trip.end - trip.start);
         const routed = trip.routeKey !== null;
         const routePath = routePathForTrip(trip, routeCacheRef.current);
-        const path = routePath ?? curvedPath(trip.fromCoord, trip.toCoord);
+        const path = routePath ?? curvedFlatPath(trip.fromCoord, trip.toCoord);
         return {
           id: trip.id,
           progress,
           routed,
-          path: slicePathWindow(path, progress, tailLength / 100)
+          path: sliceFlatPathWindow(path, progress, tailLength / 100, routePath !== null && trip.routeReversed)
         };
       });
   }, [displayTrips, currentTime, routeCacheVersion, tailLength, showUnrouted]);
@@ -426,6 +426,8 @@ export function App() {
       new PathLayer<ActivePath>({
         id: "active-trips",
         data: activePaths,
+        _pathType: "open",
+        positionFormat: "XY",
         getPath: (item) => item.path,
         getColor: (item) =>
           item.routed
@@ -878,7 +880,7 @@ function withAlpha(rgb: [number, number, number], alpha: number): [number, numbe
   return [rgb[0], rgb[1], rgb[2], alpha];
 }
 
-function routePathForTrip(trip: PlaybackTrip, routeCache: globalThis.Map<string, Coord[]>): Coord[] | null {
+function routePathForTrip(trip: PlaybackTrip, routeCache: globalThis.Map<string, FlatPath>): FlatPath | null {
   if (!trip.routeKey) {
     return null;
   }
@@ -886,7 +888,7 @@ function routePathForTrip(trip: PlaybackTrip, routeCache: globalThis.Map<string,
   if (!route) {
     return null;
   }
-  return trip.routeReversed ? [...route].reverse() : route;
+  return route;
 }
 
 function routeShardIdsForTrips(trips: PlaybackTrip[]): string[] {

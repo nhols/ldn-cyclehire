@@ -1,4 +1,5 @@
 export type Coord = [number, number];
+export type FlatPath = Float32Array;
 
 export type PlaybackStation = {
   id: string;
