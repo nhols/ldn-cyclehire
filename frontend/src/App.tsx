@@ -49,6 +49,10 @@ type ActivePath = {
   routed: boolean;
 };
 
+type TraceHead = ActivePath & {
+  position: [number, number];
+};
+
 type StationFlash = {
   id: string;
   coord: [number, number];
@@ -90,6 +94,7 @@ export function App() {
   const [speed, setSpeed] = useState(180);
   const [tailLength, setTailLength] = useState(18);
   const [showUnrouted, setShowUnrouted] = useState(false);
+  const [showTraceHeads, setShowTraceHeads] = useState(true);
   const [showOriginFlashes, setShowOriginFlashes] = useState(true);
   const [showDestinationFlashes, setShowDestinationFlashes] = useState(true);
   const [routedColor, setRoutedColor] = useState(DEFAULT_ROUTED_COLOR);
@@ -412,6 +417,10 @@ export function App() {
   }, [stationsWithBalance]);
 
   const selectedStationSet = useMemo(() => new Set(filteredStationIds), [filteredStationIds]);
+  const traceHeads = useMemo(
+    () => showTraceHeads ? activePaths.map(traceHeadForPath).filter(isTraceHead) : [],
+    [activePaths, showTraceHeads]
+  );
   const layers = useMemo(
     () => [
       new ScatterplotLayer<BalancedStation>({
@@ -459,14 +468,23 @@ export function App() {
         _pathType: "open",
         positionFormat: "XY",
         getPath: (item) => item.path,
-        getColor: (item) =>
-          item.routed
-            ? withAlpha(hexToRgb(routedColor), 100 + Math.round(item.progress * 140))
-            : withAlpha(hexToRgb(unroutedColor), 55 + Math.round(item.progress * 110)),
+        getColor: (item) => traceColor(item, routedColor, unroutedColor),
         getWidth: (item) => (item.routed ? 3.5 : 2.2),
         widthMinPixels: 2,
         jointRounded: true,
         capRounded: true
+      }),
+      new ScatterplotLayer<TraceHead>({
+        id: "active-trip-heads",
+        data: traceHeads,
+        getPosition: (item) => item.position,
+        getFillColor: (item) => traceHeadFillColor(item, routedColor, unroutedColor),
+        getLineColor: [8, 12, 10, 120],
+        getRadius: (item) => (item.routed ? 34 : 26),
+        lineWidthMinPixels: 1,
+        radiusUnits: "meters",
+        stroked: true,
+        filled: true
       }),
       new ScatterplotLayer<StationFlash>({
         id: "station-flashes",
@@ -491,6 +509,7 @@ export function App() {
     ],
     [
       activePaths,
+      traceHeads,
       selectedStationSet,
       stationFlashes,
       stationsWithBalance,
@@ -728,6 +747,15 @@ export function App() {
                 <span>Show unrouted</span>
               </label>
 
+              <label className="checkbox-field">
+                <input
+                  type="checkbox"
+                  checked={showTraceHeads}
+                  onChange={(event) => setShowTraceHeads(event.target.checked)}
+                />
+                <span>Show trace heads</span>
+              </label>
+
               <label className="color-field">
                 <span>Departure flash</span>
                 <input
@@ -908,6 +936,54 @@ function hexToRgb(hex: string): [number, number, number] {
 
 function withAlpha(rgb: [number, number, number], alpha: number): [number, number, number, number] {
   return [rgb[0], rgb[1], rgb[2], alpha];
+}
+
+function traceColor(
+  item: Pick<ActivePath, "progress" | "routed">,
+  routedColor: string,
+  unroutedColor: string
+): [number, number, number, number] {
+  return item.routed
+    ? withAlpha(hexToRgb(routedColor), 100 + Math.round(item.progress * 140))
+    : withAlpha(hexToRgb(unroutedColor), 55 + Math.round(item.progress * 110));
+}
+
+function traceHeadFillColor(
+  item: Pick<ActivePath, "progress" | "routed">,
+  routedColor: string,
+  unroutedColor: string
+): [number, number, number, number] {
+  const base = item.routed ? hexToRgb(routedColor) : hexToRgb(unroutedColor);
+  return withAlpha(mixRgb(base, [255, 255, 255], 0.34), 120 + Math.round(item.progress * 45));
+}
+
+function mixRgb(
+  from: [number, number, number],
+  to: [number, number, number],
+  amount: number
+): [number, number, number] {
+  return [
+    Math.round(from[0] + (to[0] - from[0]) * amount),
+    Math.round(from[1] + (to[1] - from[1]) * amount),
+    Math.round(from[2] + (to[2] - from[2]) * amount)
+  ];
+}
+
+function traceHeadForPath(path: ActivePath): TraceHead | null {
+  const pointCount = path.path.length / 2;
+  if (pointCount < 1) return null;
+
+  const endIndex = pointCount - 1;
+  const end: [number, number] = [path.path[endIndex * 2], path.path[endIndex * 2 + 1]];
+
+  return {
+    ...path,
+    position: end
+  };
+}
+
+function isTraceHead(path: TraceHead | null): path is TraceHead {
+  return path !== null;
 }
 
 function routePathForTrip(trip: PlaybackTrip, routeCache: globalThis.Map<string, FlatPath>): FlatPath | null {

@@ -519,6 +519,10 @@ select {
   height: 100%;
 }
 
+:root[data-theme="dark"] .map-stage .maplibregl-canvas {
+  filter: grayscale(1) saturate(0.12) brightness(0.78) contrast(0.84);
+}
+
 .stats-panel {
   position: absolute;
   left: 14px;
