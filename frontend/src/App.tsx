@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import DeckGL from "@deck.gl/react";
 import { PathLayer, ScatterplotLayer } from "@deck.gl/layers";
 import { Map } from "react-map-gl/maplibre";
-import { CalendarDays, Filter, Github, Monitor, Moon, Settings2, Pause, Play, RotateCcw, Sun, X } from "lucide-react";
+import { BarChart3, Filter, Github, Info, Monitor, Moon, Settings2, Pause, Play, RotateCcw, Search, Sun, X } from "lucide-react";
 import { ActivityScrubber } from "./ActivityScrubber";
 import { DateHistogram } from "./DateHistogram";
 import { fetchDateRange, fetchDaySummaries, fetchPlayback, fetchRouteShardRoutes } from "./api";
@@ -11,17 +11,18 @@ import type { DaySummary, FlatPath, PlaybackResponse, PlaybackStation, PlaybackT
 
 const LONDON_VIEW = {
   longitude: -0.11,
-  latitude: 51.495,
-  zoom: 11.68,
+  latitude: 51.505,
+  zoom: 11.8,
   pitch: 0,
   bearing: -8
 };
 
 const MAP_STYLES = {
   dark: "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
-  light: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
+  light: "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json"
 } satisfies Record<ResolvedTheme, string>;
-const SPEEDS = [1, 10, 60, 180, 600, 1200, 2400];
+const MIN_PLAYBACK_SPEED = 1;
+const MAX_PLAYBACK_SPEED = 2400;
 const ARRIVAL_FLASH_SECONDS = 90;
 const STATION_BASE_RADIUS_METERS = 44;
 const STATION_MIN_RADIUS_METERS = 14;
@@ -103,8 +104,12 @@ export function App() {
   const [destinationFlashColor, setDestinationFlashColor] = useState(DEFAULT_DESTINATION_FLASH_COLOR);
   const [dateExplorerOpen, setDateExplorerOpen] = useState(false);
   const [traceMenuOpen, setTraceMenuOpen] = useState(false);
+  const [filterMenuOpen, setFilterMenuOpen] = useState(false);
+  const [metricsOpen, setMetricsOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
   const [stationFilterMode, setStationFilterMode] = useState(false);
   const [filteredStationIds, setFilteredStationIds] = useState<string[]>([]);
+  const [filterQuery, setFilterQuery] = useState("");
   const [playing, setPlaying] = useState(false);
   const [pendingPlay, setPendingPlay] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -114,6 +119,9 @@ export function App() {
   const lastTickRef = useRef<number | null>(null);
   const dateDiscoveryRef = useRef<HTMLDivElement | null>(null);
   const traceSettingsRef = useRef<HTMLDivElement | null>(null);
+  const filterMenuRef = useRef<HTMLDivElement | null>(null);
+  const aboutMenuRef = useRef<HTMLDivElement | null>(null);
+  const filterSearchRef = useRef<HTMLInputElement | null>(null);
   const resolvedTheme = themePreference === "system" ? systemTheme : themePreference;
   const routeShardFetchConcurrency = isLowMemoryRouteMode()
     ? MOBILE_ROUTE_SHARD_FETCH_CONCURRENCY
@@ -138,7 +146,7 @@ export function App() {
   }, [themePreference]);
 
   useEffect(() => {
-    if (!dateExplorerOpen && !traceMenuOpen) return;
+    if (!dateExplorerOpen && !traceMenuOpen && !filterMenuOpen && !aboutOpen) return;
 
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target;
@@ -149,12 +157,20 @@ export function App() {
       if (traceMenuOpen && !traceSettingsRef.current?.contains(target)) {
         setTraceMenuOpen(false);
       }
+      if (filterMenuOpen && !filterMenuRef.current?.contains(target)) {
+        setFilterMenuOpen(false);
+      }
+      if (aboutOpen && !aboutMenuRef.current?.contains(target)) {
+        setAboutOpen(false);
+      }
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       setDateExplorerOpen(false);
       setTraceMenuOpen(false);
+      setFilterMenuOpen(false);
+      setAboutOpen(false);
     };
 
     document.addEventListener("pointerdown", handlePointerDown);
@@ -163,7 +179,13 @@ export function App() {
       document.removeEventListener("pointerdown", handlePointerDown);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [dateExplorerOpen, traceMenuOpen]);
+  }, [dateExplorerOpen, traceMenuOpen, filterMenuOpen, aboutOpen]);
+
+  useEffect(() => {
+    if (filterMenuOpen) {
+      filterSearchRef.current?.focus();
+    }
+  }, [filterMenuOpen]);
 
   useEffect(() => {
     Promise.all([fetchDateRange(), fetchDaySummaries()])
@@ -192,7 +214,7 @@ export function App() {
         setRouteCacheVersion((value) => value + 1);
         setRequiredRouteShards(routeShardIds);
         setLoadedRouteShardCount(0);
-        setPendingPlay(false);
+        setPendingPlay(true);
         const firstTrip = data.trips[0];
         setCurrentTime(firstTrip ? Math.max(0, firstTrip.start - 600) : 7 * 3600);
       })
@@ -416,6 +438,21 @@ export function App() {
     return new globalThis.Map(stationsWithBalance.map((station) => [station.id, station]));
   }, [stationsWithBalance]);
 
+  const filteredStations = useMemo(() => {
+    return filteredStationIds
+      .map((stationId) => stationById.get(stationId))
+      .filter((station): station is BalancedStation => station !== undefined);
+  }, [filteredStationIds, stationById]);
+
+  const filterSearchResults = useMemo(() => {
+    const query = filterQuery.trim().toLocaleLowerCase();
+    if (!query) return [];
+    return stationsWithBalance
+      .filter((station) => station.name.toLocaleLowerCase().includes(query))
+      .sort((a, b) => b.tripCount - a.tripCount)
+      .slice(0, 8);
+  }, [filterQuery, stationsWithBalance]);
+
   const selectedStationSet = useMemo(() => new Set(filteredStationIds), [filteredStationIds]);
   const traceHeads = useMemo(
     () => showTraceHeads ? activePaths.map(traceHeadForPath).filter(isTraceHead) : [],
@@ -536,305 +573,573 @@ export function App() {
   const loadingProgressLabel = routeLoading
     ? `Loading routes ${loadedRouteShardCount.toLocaleString()} of ${requiredRouteShards.length.toLocaleString()}`
     : `Loading ${selectedDate}`;
+  const selectedDateLabel = formatPanelDate(selectedDate);
+  const currentTimeLabel = formatPanelClock(currentTime);
+  const settingsShortcutLabel = isApplePlatform() ? "⌘K" : "Ctrl K";
+  const speedSliderValue = speedToSliderValue(speed);
+  const speedScaleLabel = formatSpeedScale(speed);
+
+  function togglePlayback() {
+    if (playing) {
+      setPlaying(false);
+      setPendingPlay(false);
+    } else if (routesReady) {
+      setPlaying(true);
+    } else {
+      setPendingPlay(true);
+    }
+  }
+
+  function restartPlayback() {
+    if (routesReady) {
+      setPlaying(true);
+      setPendingPlay(false);
+    } else {
+      setPlaying(false);
+      setPendingPlay(true);
+    }
+    setCurrentTime(0);
+  }
+
+  function toggleStationFilter(stationId: string) {
+    setFilteredStationIds((value) =>
+      value.includes(stationId)
+        ? value.filter((selectedId) => selectedId !== stationId)
+        : [...value, stationId]
+    );
+  }
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setTraceMenuOpen((value) => !value);
+        setDateExplorerOpen(false);
+        setFilterMenuOpen(false);
+        setAboutOpen(false);
+        return;
+      }
+
+      if (!event.metaKey && !event.ctrlKey && !event.altKey && !isTextEntryTarget(event.target)) {
+        if (event.key.toLowerCase() === "f") {
+          event.preventDefault();
+          setFilterMenuOpen((value) => !value);
+          setDateExplorerOpen(false);
+          setTraceMenuOpen(false);
+          setAboutOpen(false);
+          return;
+        }
+
+        if (event.key.toLowerCase() === "m") {
+          event.preventDefault();
+          setMetricsOpen((value) => !value);
+          return;
+        }
+
+        if (event.key.toLowerCase() === "r") {
+          event.preventDefault();
+          restartPlayback();
+          return;
+        }
+
+        if (event.key.toLowerCase() === "i") {
+          event.preventDefault();
+          setAboutOpen((value) => !value);
+          setDateExplorerOpen(false);
+          setTraceMenuOpen(false);
+          setFilterMenuOpen(false);
+          return;
+        }
+      }
+
+      if (event.code === "Space" && !event.metaKey && !event.ctrlKey && !event.altKey && !isTextEntryTarget(event.target)) {
+        event.preventDefault();
+        togglePlayback();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  });
 
   return (
     <main className="app-shell">
-      <section className="toolbar" aria-label="Playback controls">
-        <div className="brand-block">
-          <div className="brand-copy">
-            <h1>London Cycle Hire</h1>
-            <p>Powered by TfL Open Data</p>
-          </div>
-          <span>{formatClock(currentTime)}</span>
-          <a
-            className="github-link"
-            href="https://github.com/nhols/ldn-cyclehire"
-            target="_blank"
-            rel="noreferrer"
-            aria-label="View source on GitHub"
-            title="View source on GitHub"
+      <section className="map-stage" aria-label="Cycle hire map playback">
+        <DeckGL initialViewState={LONDON_VIEW} controller layers={layers}>
+          <Map mapStyle={MAP_STYLES[resolvedTheme]} reuseMaps />
+        </DeckGL>
+
+        <div className="map-controls-left" aria-label="Playback controls">
+          <button
+            className="floating-button play-control"
+            type="button"
+            aria-label={playing ? "Pause playback" : routeLoading ? "Play when routes are loaded" : "Play playback"}
+            title={playing ? "Pause playback" : routeLoading ? "Play when routes are loaded" : "Play playback"}
+            onClick={togglePlayback}
           >
-            <Github size={18} />
-          </a>
+            {playing ? <Pause size={18} /> : <Play size={18} />}
+            <span className="mobile-button-label">{playing ? "Pause" : "Play"}</span>
+            <kbd>Space</kbd>
+          </button>
+
+          <button
+            className="floating-button compact"
+            type="button"
+            aria-label="Reset time"
+            title="Reset time"
+            onClick={restartPlayback}
+          >
+            <RotateCcw size={17} />
+            <span className="mobile-button-label">Restart</span>
+            <kbd>R</kbd>
+          </button>
+
+          <div className="filter-menu-anchor" ref={filterMenuRef}>
+            <button
+              className={`floating-button compact ${filterMenuOpen ? "active" : ""}`}
+              type="button"
+              aria-expanded={filterMenuOpen}
+              aria-label="Open station filter"
+              title="Station filter"
+              onClick={() => {
+                setFilterMenuOpen((value) => !value);
+                setDateExplorerOpen(false);
+                setTraceMenuOpen(false);
+                setAboutOpen(false);
+              }}
+            >
+              <Filter size={17} />
+              <span className="mobile-button-label">Filter</span>
+              {filteredStationIds.length > 0 && <em>{filteredStationIds.length}</em>}
+              <kbd>F</kbd>
+            </button>
+            {filterMenuOpen && (
+              <div className="filter-popover glass-panel centered-popover" role="dialog" aria-label="Station filter">
+                <div className="settings-header">
+                  <div>
+                    <strong>Station Filter</strong>
+                    <span>{filteredStationIds.length.toLocaleString()} selected</span>
+                  </div>
+                  <button
+                    className="icon-button"
+                    type="button"
+                    aria-label="Close station filter"
+                    title="Close station filter"
+                    onClick={() => setFilterMenuOpen(false)}
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+
+                <label className="switch-field">
+                  <span>Select filter stations on a map</span>
+                  <input
+                    type="checkbox"
+                    checked={stationFilterMode}
+                    onChange={(event) => setStationFilterMode(event.target.checked)}
+                  />
+                </label>
+
+                <label className="search-field">
+                  <Search size={16} />
+                  <input
+                    ref={filterSearchRef}
+                    type="search"
+                    placeholder="Type station name"
+                    value={filterQuery}
+                    onChange={(event) => setFilterQuery(event.target.value)}
+                  />
+                </label>
+
+                {filterSearchResults.length > 0 && (
+                  <div className="station-results" role="listbox" aria-label="Station search results">
+                    {filterSearchResults.map((station) => (
+                      <button
+                        key={station.id}
+                        className={selectedStationSet.has(station.id) ? "selected" : ""}
+                        type="button"
+                        onClick={() => toggleStationFilter(station.id)}
+                      >
+                        <span>{station.name}</span>
+                        <em>{station.tripCount.toLocaleString()}</em>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <div className="filter-pills-header">
+                  <span>Current filters</span>
+                  <button
+                    type="button"
+                    disabled={filteredStationIds.length === 0}
+                    onClick={() => setFilteredStationIds([])}
+                  >
+                    Clear all
+                  </button>
+                </div>
+
+                <div className="filter-pills">
+                  {filteredStations.length === 0 ? (
+                    <span>No station filters</span>
+                  ) : (
+                    filteredStations.map((station) => (
+                      <button key={station.id} type="button" onClick={() => toggleStationFilter(station.id)}>
+                        {station.name}
+                        <X size={13} />
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <button
+            className={`floating-button compact ${metricsOpen ? "active" : ""}`}
+            type="button"
+            aria-pressed={metricsOpen}
+            aria-label="Toggle detailed metrics"
+            title="Detailed metrics"
+            onClick={() => setMetricsOpen((value) => !value)}
+          >
+            <BarChart3 size={17} />
+            <span className="mobile-button-label">Metrics</span>
+            <kbd>M</kbd>
+          </button>
+
+          <div className="about-menu-anchor" ref={aboutMenuRef}>
+            <button
+              className={`floating-button compact ${aboutOpen ? "active" : ""}`}
+              type="button"
+              aria-expanded={aboutOpen}
+              aria-label="Open about"
+              title="About"
+              onClick={() => {
+                setAboutOpen((value) => !value);
+                setDateExplorerOpen(false);
+                setTraceMenuOpen(false);
+                setFilterMenuOpen(false);
+              }}
+            >
+              <Info size={17} />
+              <span className="mobile-button-label">About</span>
+              <kbd>I</kbd>
+            </button>
+            {aboutOpen && (
+              <div className="about-popover glass-panel centered-popover" role="dialog" aria-label="About this visualization">
+                <div className="settings-header">
+                  <div>
+                    <strong>London Cycle Hire</strong>
+                    <span>Powered by TfL Open Data.</span>
+                  </div>
+                  <button
+                    className="icon-button"
+                    type="button"
+                    aria-label="Close about"
+                    title="Close about"
+                    onClick={() => setAboutOpen(false)}
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+                <div className="about-copy">
+                  <p>
+                    TfL Open Data gives each hire trip a start time, end time, start station, and end station. For each
+                    pair of stations, this app finds a likely cycling route and then replays the day at the selected
+                    speed, so trips leave and arrive at their recorded times and places.
+                  </p>
+                  <p>
+                    Stations grow or shrink as their balance changes through the day: a station with more arrivals than
+                    departures gets larger, while one with a bike deficit gets smaller.
+                  </p>
+                  <p>
+                    The activity histogram shows the rhythm of a day. Weekdays often have a sharp morning commute peak
+                    around 9am and a more spread-out evening peak as people make their way home. Disruptions and events
+                    show up too: Tube strike days such as 2015-07-09 have unusually high volume.
+                  </p>
+                  <p>
+                    Big football nights are visible as well. On 2021-07-11, the England v Italy Euro final shows traffic
+                    building before the 8pm kick-off as people head out, a drop during the match, then a sharp spike
+                    after Italy win on penalties.
+                  </p>
+                </div>
+                <a
+                  className="source-link"
+                  href="https://github.com/nhols/ldn-cyclehire"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <Github size={16} />
+                  <span>GitHub source</span>
+                </a>
+              </div>
+            )}
+          </div>
+
+          <div className="trace-settings command-menu-anchor" ref={traceSettingsRef}>
+            <button
+              className={`floating-button compact ${traceMenuOpen ? "active" : ""}`}
+              type="button"
+              aria-expanded={traceMenuOpen}
+              aria-label="Open settings"
+              title="Settings"
+              onClick={() => {
+                setTraceMenuOpen((value) => !value);
+                setDateExplorerOpen(false);
+                setFilterMenuOpen(false);
+                setAboutOpen(false);
+              }}
+            >
+              <Settings2 size={18} />
+              <span className="mobile-button-label">Settings</span>
+              <kbd>{settingsShortcutLabel}</kbd>
+            </button>
+            {traceMenuOpen && (
+              <div className="trace-popover settings-command-menu centered-popover" role="dialog" aria-label="Settings">
+                <div className="settings-header">
+                  <div>
+                    <strong>Settings</strong>
+                    <span>Playback, theme, traces</span>
+                  </div>
+                  <button
+                    className="icon-button"
+                    type="button"
+                    aria-label="Close settings"
+                    title="Close settings"
+                    onClick={() => setTraceMenuOpen(false)}
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+
+                <div className="popover-group">
+                  <span>Playback</span>
+                  <label className="popover-slider speed-slider">
+                    <span>Speed</span>
+                    <strong>{speedScaleLabel}</strong>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      step={1}
+                      value={speedSliderValue}
+                      onChange={(event) => setSpeed(sliderValueToSpeed(Number(event.target.value)))}
+                    />
+                  </label>
+                  <label className="popover-slider">
+                    <span>Tail {tailLength}%</span>
+                    <input
+                      type="range"
+                      min={4}
+                      max={40}
+                      step={1}
+                      value={tailLength}
+                      onChange={(event) => setTailLength(Number(event.target.value))}
+                    />
+                  </label>
+                </div>
+
+                <div className="popover-group">
+                  <span>Theme</span>
+                  <div className="theme-toggle" role="group" aria-label="Theme preference">
+                    <button
+                      className={themePreference === "light" ? "active" : ""}
+                      type="button"
+                      aria-label="Use light theme"
+                      title="Light"
+                      onClick={() => setThemePreference("light")}
+                    >
+                      <Sun size={16} />
+                    </button>
+                    <button
+                      className={themePreference === "system" ? "active" : ""}
+                      type="button"
+                      aria-label="Use system theme"
+                      title={`System (${resolvedTheme})`}
+                      onClick={() => setThemePreference("system")}
+                    >
+                      <Monitor size={16} />
+                    </button>
+                    <button
+                      className={themePreference === "dark" ? "active" : ""}
+                      type="button"
+                      aria-label="Use dark theme"
+                      title="Dark"
+                      onClick={() => setThemePreference("dark")}
+                    >
+                      <Moon size={16} />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="popover-group two-column-controls">
+                  <span>Traces</span>
+                  <label className="color-field">
+                    <span>Routed</span>
+                    <input
+                      type="color"
+                      value={routedColor}
+                      onChange={(event) => setRoutedColor(event.target.value)}
+                    />
+                  </label>
+                  <label className="color-field">
+                    <span>Unrouted</span>
+                    <input
+                      type="color"
+                      value={unroutedColor}
+                      onChange={(event) => setUnroutedColor(event.target.value)}
+                    />
+                  </label>
+                  <label className="checkbox-field">
+                    <input
+                      type="checkbox"
+                      checked={showUnrouted}
+                      onChange={(event) => setShowUnrouted(event.target.checked)}
+                    />
+                    <span>Show unrouted</span>
+                  </label>
+                  <label className="checkbox-field">
+                    <input
+                      type="checkbox"
+                      checked={showTraceHeads}
+                      onChange={(event) => setShowTraceHeads(event.target.checked)}
+                    />
+                    <span>Show trace heads</span>
+                  </label>
+                </div>
+
+                <div className="popover-group two-column-controls">
+                  <span>Station flashes</span>
+                  <label className="color-field">
+                    <span>Departure</span>
+                    <input
+                      type="color"
+                      value={originFlashColor}
+                      onChange={(event) => setOriginFlashColor(event.target.value)}
+                    />
+                  </label>
+                  <label className="color-field">
+                    <span>Arrival</span>
+                    <input
+                      type="color"
+                      value={destinationFlashColor}
+                      onChange={(event) => setDestinationFlashColor(event.target.value)}
+                    />
+                  </label>
+                  <label className="checkbox-field">
+                    <input
+                      type="checkbox"
+                      checked={showOriginFlashes}
+                      onChange={(event) => setShowOriginFlashes(event.target.checked)}
+                    />
+                    <span>Show departure flash</span>
+                  </label>
+                  <label className="checkbox-field">
+                    <input
+                      type="checkbox"
+                      checked={showDestinationFlashes}
+                      onChange={(event) => setShowDestinationFlashes(event.target.checked)}
+                    />
+                    <span>Show arrival flash</span>
+                  </label>
+                </div>
+
+              </div>
+            )}
+          </div>
         </div>
 
-        <div className="date-discovery" ref={dateDiscoveryRef}>
-          <label className="field date-field">
-            <span>Date</span>
-            <input
-              type="date"
-              min={minDate}
-              max={maxDate}
-              value={selectedDate}
-              onChange={(event) => setSelectedDate(event.target.value)}
-            />
-          </label>
+        <div className="date-discovery map-date-control" ref={dateDiscoveryRef}>
           <button
-            className={`icon-button date-explorer-button ${dateExplorerOpen ? "active" : ""}`}
+            className={`date-chip ${dateExplorerOpen ? "active" : ""}`}
             type="button"
             aria-label="Open date explorer"
             title="Date explorer"
             aria-expanded={dateExplorerOpen}
-            onClick={() => setDateExplorerOpen((value) => !value)}
+            onClick={() => {
+              setDateExplorerOpen((value) => !value);
+              setTraceMenuOpen(false);
+              setFilterMenuOpen(false);
+              setAboutOpen(false);
+            }}
           >
-            <CalendarDays size={18} />
+            <span>{selectedDateLabel}</span>
+            <strong>{currentTimeLabel}</strong>
           </button>
           {dateExplorerOpen && (
             <div className="date-explorer-popover" role="dialog" aria-label="Date explorer">
               <div className="date-explorer-header">
                 <span>Date explorer</span>
-                <strong>{selectedDate}</strong>
+                <strong>{selectedDateLabel}</strong>
               </div>
+              <label className="field date-field">
+                <span>Date</span>
+                <input
+                  type="date"
+                  min={minDate}
+                  max={maxDate}
+                  value={selectedDate}
+                  onChange={(event) => setSelectedDate(event.target.value)}
+                />
+              </label>
               <DateHistogram days={daySummaries} selectedDate={selectedDate} onChange={setSelectedDate} />
             </div>
           )}
         </div>
 
-        <button
-          className="icon-button primary play-button"
-          type="button"
-          aria-label={playing ? "Pause playback" : routeLoading ? "Play when routes are loaded" : "Play playback"}
-          title={playing ? "Pause playback" : routeLoading ? "Play when routes are loaded" : "Play playback"}
-          onClick={() => {
-            if (playing) {
-              setPlaying(false);
-              setPendingPlay(false);
-            } else if (routesReady) {
-              setPlaying(true);
-            } else {
-              setPendingPlay(true);
-            }
-          }}
-        >
-          {playing ? <Pause size={18} /> : <Play size={18} />}
-        </button>
-
-        <button
-          className="icon-button reset-button"
-          type="button"
-          aria-label="Reset time"
-          title="Reset time"
-          onClick={() => setCurrentTime(0)}
-        >
-          <RotateCcw size={18} />
-        </button>
-
-        <label className="field speed-field">
-          <span>Speed</span>
-          <select value={speed} onChange={(event) => setSpeed(Number(event.target.value))}>
-            {SPEEDS.map((value) => (
-              <option key={value} value={value}>
-                {value}x
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="scrubber">
-          <span>Time</span>
+        <aside className="activity-panel" aria-label="Daily activity">
+          <div className="activity-panel-summary">
+            <strong>{activeTrips.toLocaleString()}</strong>
+            <span>active</span>
+            <em>{totalTrips.toLocaleString()} total</em>
+          </div>
           <ActivityScrubber
             activity={playback?.activity ?? []}
             currentTime={currentTime}
             onChange={setCurrentTime}
           />
-        </label>
-
-        <div className="trace-settings" ref={traceSettingsRef}>
-          <button
-            className={`icon-button ${traceMenuOpen ? "active" : ""}`}
-            type="button"
-            aria-expanded={traceMenuOpen}
-            aria-label="Trace settings"
-            title="Trace settings"
-            onClick={() => setTraceMenuOpen((value) => !value)}
-          >
-            <Settings2 size={18} />
-          </button>
-          <div className="station-filter-controls">
-            <button
-              className={`icon-button station-filter-mode-button ${stationFilterMode ? "active" : ""}`}
-              type="button"
-              aria-pressed={stationFilterMode}
-              aria-label="Station filter mode"
-              title="Station filter mode"
-              onClick={() => setStationFilterMode((value) => !value)}
-            >
-              <Filter size={18} />
-              {filteredStationIds.length > 0 && <span>{filteredStationIds.length}</span>}
-            </button>
-            <button
-              className="icon-button station-filter-clear-button"
-              type="button"
-              aria-label="Clear station filters"
-              title="Clear station filters"
-              disabled={filteredStationIds.length === 0}
-              onClick={() => setFilteredStationIds([])}
-            >
-              <X size={16} />
-            </button>
+          <div className="activity-axis" aria-hidden="true">
+            <span>06:00</span>
+            <span>12:00</span>
+            <span>18:00</span>
           </div>
-          {traceMenuOpen && (
-            <div className="trace-popover" role="dialog" aria-label="Trace settings">
-              <div className="popover-group">
-                <span>Theme</span>
-                <div className="theme-toggle" role="group" aria-label="Theme preference">
-                  <button
-                    className={themePreference === "light" ? "active" : ""}
-                    type="button"
-                    aria-label="Use light theme"
-                    title="Light"
-                    onClick={() => setThemePreference("light")}
-                  >
-                    <Sun size={16} />
-                  </button>
-                  <button
-                    className={themePreference === "system" ? "active" : ""}
-                    type="button"
-                    aria-label="Use system theme"
-                    title={`System (${resolvedTheme})`}
-                    onClick={() => setThemePreference("system")}
-                  >
-                    <Monitor size={16} />
-                  </button>
-                  <button
-                    className={themePreference === "dark" ? "active" : ""}
-                    type="button"
-                    aria-label="Use dark theme"
-                    title="Dark"
-                    onClick={() => setThemePreference("dark")}
-                  >
-                    <Moon size={16} />
-                  </button>
-                </div>
-              </div>
-
-              <label className="popover-slider">
-                <span>Tail {tailLength}%</span>
-                <input
-                  type="range"
-                  min={4}
-                  max={40}
-                  step={1}
-                  value={tailLength}
-                  onChange={(event) => setTailLength(Number(event.target.value))}
-                />
-              </label>
-
-              <label className="color-field">
-                <span>Routed</span>
-                <input
-                  type="color"
-                  value={routedColor}
-                  onChange={(event) => setRoutedColor(event.target.value)}
-                />
-              </label>
-
-              <label className="color-field">
-                <span>Unrouted</span>
-                <input
-                  type="color"
-                  value={unroutedColor}
-                  onChange={(event) => setUnroutedColor(event.target.value)}
-                />
-              </label>
-
-              <label className="checkbox-field">
-                <input
-                  type="checkbox"
-                  checked={showUnrouted}
-                  onChange={(event) => setShowUnrouted(event.target.checked)}
-                />
-                <span>Show unrouted</span>
-              </label>
-
-              <label className="checkbox-field">
-                <input
-                  type="checkbox"
-                  checked={showTraceHeads}
-                  onChange={(event) => setShowTraceHeads(event.target.checked)}
-                />
-                <span>Show trace heads</span>
-              </label>
-
-              <label className="color-field">
-                <span>Departure flash</span>
-                <input
-                  type="color"
-                  value={originFlashColor}
-                  onChange={(event) => setOriginFlashColor(event.target.value)}
-                />
-              </label>
-
-              <label className="checkbox-field">
-                <input
-                  type="checkbox"
-                  checked={showOriginFlashes}
-                  onChange={(event) => setShowOriginFlashes(event.target.checked)}
-                />
-                <span>Show departure flash</span>
-              </label>
-
-              <label className="color-field">
-                <span>Arrival flash</span>
-                <input
-                  type="color"
-                  value={destinationFlashColor}
-                  onChange={(event) => setDestinationFlashColor(event.target.value)}
-                />
-              </label>
-
-              <label className="checkbox-field">
-                <input
-                  type="checkbox"
-                  checked={showDestinationFlashes}
-                  onChange={(event) => setShowDestinationFlashes(event.target.checked)}
-                />
-                <span>Show arrival flash</span>
-              </label>
-            </div>
-          )}
-        </div>
-      </section>
-
-      <section className="map-stage" aria-label="Cycle hire map playback">
-        <DeckGL initialViewState={LONDON_VIEW} controller layers={layers}>
-          <Map mapStyle={MAP_STYLES[resolvedTheme]} reuseMaps />
-        </DeckGL>
-        <aside className="stats-panel">
-          <div className="metric-key" aria-label="Metric format">
-            <span>Key</span>
-            <strong>Metric</strong>
-            <em>routed / unrouted</em>
-          </div>
-          <Metric
-            label="Journeys"
-            value={runningTotals.journeys}
-            split={{
-              routed: runningTotals.routedJourneys,
-              unrouted: runningTotals.unroutedJourneys
-            }}
-          />
-          <Metric
-            label="Active"
-            value={activeTrips}
-            split={{
-              routed: activeRoutedTrips,
-              unrouted: activeUnroutedTrips
-            }}
-          />
-          <Metric label="Routed km" value={runningTotals.routedKilometres} decimals={1} />
-          <Metric
-            className="static-metric-start"
-            label="Journeys"
-            value={totalTrips}
-            split={{
-              routed: totalRoutedTrips,
-              unrouted: totalUnroutedTrips
-            }}
-          />
-          <Metric label="Stations" value={summary?.stationCount ?? 0} />
-          <Metric label="Unmatched" value={summary?.unmatchedTrips ?? 0} />
         </aside>
+        {metricsOpen && (
+          <aside className="metrics-panel glass-panel" aria-label="Detailed metrics">
+            <div className="metric-key" aria-label="Metric format">
+              <span>Key</span>
+              <strong>Metric</strong>
+              <em>routed / unrouted</em>
+            </div>
+            <Metric
+              label="Journeys"
+              value={runningTotals.journeys}
+              split={{
+                routed: runningTotals.routedJourneys,
+                unrouted: runningTotals.unroutedJourneys
+              }}
+            />
+            <Metric
+              label="Active"
+              value={activeTrips}
+              split={{
+                routed: activeRoutedTrips,
+                unrouted: activeUnroutedTrips
+              }}
+            />
+            <Metric label="Routed km" value={runningTotals.routedKilometres} decimals={1} />
+            <Metric
+              label="Total trips"
+              value={totalTrips}
+              split={{
+                routed: totalRoutedTrips,
+                unrouted: totalUnroutedTrips
+              }}
+            />
+            <Metric label="Stations" value={summary?.stationCount ?? 0} />
+            <Metric label="Unmatched" value={summary?.unmatchedTrips ?? 0} />
+          </aside>
+        )}
         {dataLoading && (
           <div
             className="loading-progress"
@@ -1069,4 +1374,65 @@ function isThemePreference(value: string | null): value is ThemePreference {
 
 function getSystemTheme(): ResolvedTheme {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function isApplePlatform(): boolean {
+  return /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+}
+
+function speedToSliderValue(speed: number): number {
+  const min = Math.log(MIN_PLAYBACK_SPEED);
+  const max = Math.log(MAX_PLAYBACK_SPEED);
+  return Math.round(((Math.log(clamp(speed, MIN_PLAYBACK_SPEED, MAX_PLAYBACK_SPEED)) - min) / (max - min)) * 100);
+}
+
+function sliderValueToSpeed(value: number): number {
+  const min = Math.log(MIN_PLAYBACK_SPEED);
+  const max = Math.log(MAX_PLAYBACK_SPEED);
+  const speed = Math.exp(min + (clamp(value, 0, 100) / 100) * (max - min));
+  return Math.max(MIN_PLAYBACK_SPEED, Math.round(speed));
+}
+
+function formatSpeedScale(speed: number): string {
+  return `1 minute on screen = ${formatApproxDuration(speed * 60)} in the day`;
+}
+
+function formatApproxDuration(seconds: number): string {
+  const roundedMinutes = Math.max(1, Math.round(seconds / 60));
+  const hours = Math.floor(roundedMinutes / 60);
+  const minutes = roundedMinutes % 60;
+
+  if (hours === 0) {
+    return `${roundedMinutes} ${roundedMinutes === 1 ? "minute" : "mins"}`;
+  }
+
+  if (minutes === 0) {
+    return `${hours} ${hours === 1 ? "hour" : "hours"}`;
+  }
+
+  return `${hours} ${hours === 1 ? "hour" : "hours"} ${minutes} mins`;
+}
+
+function formatPanelDate(date: string): string {
+  return new Date(`${date}T00:00:00Z`).toLocaleDateString("en-GB", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC"
+  });
+}
+
+function formatPanelClock(seconds: number): string {
+  const bounded = Math.max(0, Math.min(86399, Math.floor(seconds)));
+  const hours = Math.floor(bounded / 3600);
+  const minutes = Math.floor((bounded % 3600) / 60);
+  const suffix = hours >= 12 ? "PM" : "AM";
+  const displayHours = hours % 12 || 12;
+  return `${displayHours}:${minutes.toString().padStart(2, "0")} ${suffix}`;
+}
+
+function isTextEntryTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return target.matches("input, textarea, select") || target.isContentEditable;
 }
